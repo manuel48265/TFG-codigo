@@ -3,6 +3,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from tfg_codigo.Research.queries_research import (
+    backfill_missing_abstracts,
     merge_and_dedup,
     reconstruct_abstract,
     search_openalex,
@@ -167,6 +168,54 @@ def test_merge_and_dedup_keeps_distinct_papers_separate():
     assert len(merged) == 2
 
 
+def _doi_lookup_response(abstract_inverted_index):
+    response = MagicMock()
+    response.status_code = 200
+    response.json.return_value = {"abstract_inverted_index": abstract_inverted_index}
+    return response
+
+
+@patch("tfg_codigo.Research.queries_research.requests.get")
+def test_backfill_missing_abstracts_recovers_via_doi(mock_get):
+    mock_get.return_value = _doi_lookup_response({"hello": [0], "world": [1]})
+    rows = [{"title": "A", "abstract": "", "doi": "10.1/a"}]
+
+    result = backfill_missing_abstracts(rows)
+
+    assert result[0]["abstract"] == "hello world"
+    mock_get.assert_called_once()
+
+
+@patch("tfg_codigo.Research.queries_research.requests.get")
+def test_backfill_missing_abstracts_skips_rows_that_already_have_one(mock_get):
+    rows = [{"title": "A", "abstract": "already here", "doi": "10.1/a"}]
+
+    result = backfill_missing_abstracts(rows)
+
+    assert result[0]["abstract"] == "already here"
+    mock_get.assert_not_called()
+
+
+@patch("tfg_codigo.Research.queries_research.requests.get")
+def test_backfill_missing_abstracts_skips_rows_without_doi(mock_get):
+    rows = [{"title": "A", "abstract": "", "doi": ""}]
+
+    result = backfill_missing_abstracts(rows)
+
+    assert result[0]["abstract"] == ""
+    mock_get.assert_not_called()
+
+
+@patch("tfg_codigo.Research.queries_research.requests.get")
+def test_backfill_missing_abstracts_leaves_row_empty_when_openalex_has_none_either(mock_get):
+    mock_get.return_value = _doi_lookup_response(None)
+    rows = [{"title": "A", "abstract": "", "doi": "10.1/a"}]
+
+    result = backfill_missing_abstracts(rows)
+
+    assert result[0]["abstract"] == ""
+
+
 if __name__ == "__main__":
     test_search_scopus_paginates_until_total_reached()
     test_search_scopus_stops_on_empty_page()
@@ -178,4 +227,8 @@ if __name__ == "__main__":
     test_merge_and_dedup_merges_same_title_with_different_dois()
     test_write_csv_handles_rows_with_different_columns()
     test_merge_and_dedup_keeps_distinct_papers_separate()
+    test_backfill_missing_abstracts_recovers_via_doi()
+    test_backfill_missing_abstracts_skips_rows_that_already_have_one()
+    test_backfill_missing_abstracts_skips_rows_without_doi()
+    test_backfill_missing_abstracts_leaves_row_empty_when_openalex_has_none_either()
     print("ok")

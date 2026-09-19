@@ -35,25 +35,28 @@ SCOPUS_QUERIES = {
             OR "graph falsification"
         )
     """,
-    "q2_membership": """
+    "q2_validating": """
         TITLE-ABS-KEY(
-            ("membership testing" OR "testing membership")
-            AND
-            ("Markov equivalence class" OR "Markov equivalence")
+            "validating causal graph"
+            OR "validating causal graphs"
+            OR "validating causal model"
+            OR "validating causal models"
+            OR "validate causal graph"
+            OR "causal graph validation"
+            OR "causal model validation"
         )
     """,
-    "q3_dagitty": """
+    "q3_testing": """
         TITLE-ABS-KEY(
-            dagitty
-            AND
-            ("directed acyclic graph" OR "testable implications" OR "d-separation")
-        )
-    """,
-    "q4_dag_inference": """
-        TITLE-ABS-KEY(
-            "directed acyclic graph"
-            AND
-            ("hypothesis testing" OR "DAG inference" OR "inference of DAG")
+            "testing causal graph"
+            OR "testing causal graphs"
+            OR "testing causal model"
+            OR "testing causal models"
+            OR "test causal graph"
+            OR "causal graph testing"
+            OR "causal model testing"
+            OR "testing directed acyclic graph"
+            OR "testing a directed acyclic graph"
         )
     """,
 }
@@ -67,20 +70,25 @@ OPENALEX_QUERIES = {
         OR "falsify causal graph"
         OR "graph falsification"
     """,
-    "q2_membership": """
-        ("membership testing" OR "testing membership")
-        AND
-        ("Markov equivalence class" OR "Markov equivalence")
+    "q2_validating": """
+        "validating causal graph"
+        OR "validating causal graphs"
+        OR "validating causal model"
+        OR "validating causal models"
+        OR "validate causal graph"
+        OR "causal graph validation"
+        OR "causal model validation"
     """,
-    "q3_dagitty": """
-        dagitty
-        AND
-        ("directed acyclic graph" OR "testable implications" OR "d-separation")
-    """,
-    "q4_dag_inference": """
-        "directed acyclic graph"
-        AND
-        ("hypothesis testing" OR "DAG inference" OR "inference of DAG")
+    "q3_testing": """
+        "testing causal graph"
+        OR "testing causal graphs"
+        OR "testing causal model"
+        OR "testing causal models"
+        OR "test causal graph"
+        OR "causal graph testing"
+        OR "causal model testing"
+        OR "testing directed acyclic graph"
+        OR "testing a directed acyclic graph"
     """,
 }
 
@@ -159,6 +167,33 @@ def reconstruct_abstract(inverted_index: dict | None) -> str:
     return " ".join(positions[i] for i in sorted(positions))
 
 
+def backfill_abstract_by_doi(doi: str) -> str:
+    """Look up a single work in OpenAlex by DOI and return its abstract, if any.
+    Used for rows whose abstract came back empty from the query APIs (mostly Scopus's
+    STANDARD view, which often omits dc:description)."""
+    doi = _normalize_doi(doi)
+    if not doi:
+        return ""
+    params = {"mailto": OPENALEX_MAILTO} if OPENALEX_MAILTO else {}
+    response = requests.get(f"{OPENALEX_URL}/https://doi.org/{doi}", params=params, timeout=30)
+    if response.status_code != 200:
+        return ""
+    return reconstruct_abstract(response.json().get("abstract_inverted_index"))
+
+
+def backfill_missing_abstracts(rows: list[dict]) -> list[dict]:
+    recovered = 0
+    for row in rows:
+        if (row.get("abstract") or "").strip() or not (row.get("doi") or "").strip():
+            continue
+        abstract = backfill_abstract_by_doi(row["doi"])
+        if abstract:
+            row["abstract"] = abstract
+            recovered += 1
+    print(f"[backfill] recovered {recovered} missing abstracts via OpenAlex DOI lookup")
+    return rows
+
+
 def _openalex_filter(query: str) -> str:
     return (
         f"title_and_abstract.search:{' '.join(query.split())},"
@@ -167,10 +202,31 @@ def _openalex_filter(query: str) -> str:
     )
 
 
-def search_openalex(query: str, query_name: str) -> list[dict]:
+def _openalex_row(work: dict, query_name: str) -> dict:
+    source = (work.get("primary_location") or {}).get("source") or {}
+    return {
+        "query": query_name,
+        "openalex_id": work.get("id", ""),
+        "title": work.get("display_name", ""),
+        "authors": "; ".join(
+            a["author"]["display_name"] for a in work.get("authorships", []) if a.get("author")
+        ),
+        "doi": (work.get("doi") or "").replace("https://doi.org/", ""),
+        "journal": source.get("display_name", ""),
+        "date": work.get("publication_date", ""),
+        "cited_by": work.get("cited_by_count", ""),
+        "abstract": reconstruct_abstract(work.get("abstract_inverted_index")),
+        "url": work.get("id", ""),
+        "referenced_works": ";".join(
+            rid.rsplit("/", 1)[-1] for rid in work.get("referenced_works", [])
+        ),
+    }
+
+
+def _paginate_openalex(filter_str: str, query_name: str) -> list[dict]:
     rows = []
     cursor = "*"
-    params = {"filter": _openalex_filter(query), "per-page": 200}
+    params = {"filter": filter_str, "per-page": 200}
     if OPENALEX_MAILTO:
         params["mailto"] = OPENALEX_MAILTO
 
@@ -179,32 +235,17 @@ def search_openalex(query: str, query_name: str) -> list[dict]:
         response.raise_for_status()
         data = response.json()
 
-        for work in data.get("results", []):
-            source = (work.get("primary_location") or {}).get("source") or {}
-            rows.append(
-                {
-                    "query": query_name,
-                    "openalex_id": work.get("id", ""),
-                    "title": work.get("display_name", ""),
-                    "authors": "; ".join(
-                        a["author"]["display_name"]
-                        for a in work.get("authorships", [])
-                        if a.get("author")
-                    ),
-                    "doi": (work.get("doi") or "").replace("https://doi.org/", ""),
-                    "journal": source.get("display_name", ""),
-                    "date": work.get("publication_date", ""),
-                    "cited_by": work.get("cited_by_count", ""),
-                    "abstract": reconstruct_abstract(work.get("abstract_inverted_index")),
-                    "url": work.get("id", ""),
-                }
-            )
+        rows.extend(_openalex_row(work, query_name) for work in data.get("results", []))
 
         if not data.get("results"):
             break
         cursor = data.get("meta", {}).get("next_cursor")
 
     return rows
+
+
+def search_openalex(query: str, query_name: str) -> list[dict]:
+    return _paginate_openalex(_openalex_filter(query), query_name)
 
 
 def count_results_openalex(query: str) -> int:
@@ -322,6 +363,7 @@ def merge_from_disk() -> None:
 
 def _write_merged(scopus_rows: list[dict], openalex_rows: list[dict]) -> None:
     merged = merge_and_dedup(scopus_rows, openalex_rows)
+    merged = backfill_missing_abstracts(merged)
     MERGED_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     write_csv(MERGED_OUTPUT_DIR / "all_papers_deduped.csv", merged)
 
