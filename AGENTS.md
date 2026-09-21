@@ -23,7 +23,14 @@ It's independent from `~/Escritorio/TFG/codigo` (where the literature review liv
   `disallow_incomplete_defs`) are configured in `pyproject.toml` and enforce this.
   Run `uv run ruff check .` and `uv run mypy src` before considering Python work done.
   `./scripts/format.sh` runs `ruff check --fix` + `ruff format` to auto-fix
-  imports/style across the whole project.
+  imports/style across the whole project. `./scripts/check.sh` verifies
+  everything without modifying files (ruff check, ruff format --check,
+  mypy, pytest, in that order, stopping at the first failure) — run this
+  before considering a change done. Shortcuts: `make check` / `make format`.
+- Pre-commit hook: `.githooks/pre-commit` runs `check.sh` and blocks the
+  commit if it fails. Git doesn't share `core.hooksPath` across clones —
+  after a fresh clone, run `git config core.hooksPath .githooks` once to
+  activate it.
 - Code language (the TFG itself is written in Spanish): identifiers
   (functions/variables) and inline comments in **English** — standard for
   this ecosystem (numpy/sklearn/xgboost/etc.) and avoids mixing languages
