@@ -21,7 +21,7 @@ It's independent from `~/Escritorio/TFG/codigo` (where the literature review liv
   they apply equally to any agent.
 - Type hints are mandatory: `ruff` (rule `ANN`) and `mypy` (`disallow_untyped_defs`,
   `disallow_incomplete_defs`) are configured in `pyproject.toml` and enforce this.
-  Run `uv run ruff check .` and `uv run mypy src` before considering Python work done.
+  Run `uv run ruff check .` and `uv run mypy src test` before considering Python work done.
   `./scripts/format.sh` runs `ruff check --fix` + `ruff format` to auto-fix
   imports/style across the whole project. `./scripts/check.sh` verifies
   everything without modifying files (ruff check, ruff format --check,

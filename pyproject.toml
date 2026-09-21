@@ -36,5 +36,9 @@ python_version = "3.12"
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
 
+[[tool.mypy.overrides]]
+module = "rpy2.*"
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
