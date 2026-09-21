@@ -1,3 +1,7 @@
+# Calls the official R package GeneralisedCovarianceMeasure (Peters & Shah,
+# GPL-2, github.com/cran/GeneralisedCovarianceMeasure) at runtime via rpy2 —
+# no source from that package is copied or redistributed here.
+
 import numpy as np
 import rpy2.robjects as ro
 import rpy2.robjects.numpy2ri as numpy2ri

@@ -1,3 +1,8 @@
+# Algorithm independently reimplemented from Shah & Peters (2020); its
+# structure was checked against the official R package
+# github.com/cran/GeneralisedCovarianceMeasure (Peters & Shah, GPL-2),
+# vendored for reference (not redistributed) at Referencias/GCM_R_source/.
+
 import numpy as np
 from numpy.typing import NDArray
 from scipy.stats import norm
