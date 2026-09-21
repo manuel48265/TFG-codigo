@@ -27,8 +27,9 @@ It's independent from `~/Escritorio/TFG/codigo` (where the literature review liv
   everything without modifying files (ruff check, ruff format --check,
   mypy, pytest, in that order, stopping at the first failure) — run this
   before considering a change done. Shortcuts: `make check` / `make format`.
-- Pre-commit hook: `.githooks/pre-commit` runs `check.sh` and blocks the
-  commit if it fails. Git doesn't share `core.hooksPath` across clones —
+- Pre-push hook: `.githooks/pre-push` runs `check.sh` and blocks the push
+  if it fails (commits themselves aren't gated, so WIP commits stay
+  friction-free). Git doesn't share `core.hooksPath` across clones —
   after a fresh clone, run `git config core.hooksPath .githooks` once to
   activate it.
 - Code language (the TFG itself is written in Spanish): identifiers

@@ -1,4 +1,5 @@
 import numpy as np
+import rpy2.robjects as ro
 import rpy2.robjects.numpy2ri as numpy2ri
 from numpy.typing import NDArray
 from rpy2.robjects import default_converter
@@ -6,6 +7,11 @@ from rpy2.robjects.conversion import localconverter
 from rpy2.robjects.packages import importr
 
 from src.CI_tests.common import CIResult
+
+# Drops empty site-library paths (e.g. /usr/lib/R/site-library on a fresh
+# install) before loading any package — silences R's harmless but noisy
+# "libraries ... contain no packages" warning on every import.
+ro.r(".libPaths(Filter(function(p) length(list.files(p)) > 0, .libPaths()), include.site = FALSE)")
 
 _conversion = default_converter + numpy2ri.converter
 _gcm_r = importr("GeneralisedCovarianceMeasure")
