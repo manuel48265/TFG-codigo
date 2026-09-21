@@ -19,6 +19,16 @@ It's independent from `~/Escritorio/TFG/codigo` (where the literature review liv
   check what's actually in the repo — don't invent it out of thin air.
 - If you add new working instructions, edit them here (not in `CLAUDE.md`) so
   they apply equally to any agent.
+- Type hints are mandatory: `ruff` (rule `ANN`) and `mypy` (`disallow_untyped_defs`,
+  `disallow_incomplete_defs`) are configured in `pyproject.toml` and enforce this.
+  Run `uv run ruff check .` and `uv run mypy src` before considering Python work done.
+  `./scripts/format.sh` runs `ruff check --fix` + `ruff format` to auto-fix
+  imports/style across the whole project.
+- Code language (the TFG itself is written in Spanish): identifiers
+  (functions/variables) and inline comments in **English** — standard for
+  this ecosystem (numpy/sklearn/xgboost/etc.) and avoids mixing languages
+  inside a single name. Docstrings (function/parameter descriptions) are
+  **bilingual: English then Spanish**.
 
 ## General working rules
 
