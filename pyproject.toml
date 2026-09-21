@@ -1,0 +1,18 @@
+[project]
+name = "tfg-codigo"
+version = "0.1.0"
+description = "Implementación y comparación de métodos de CI de distintos papers frente a sus implementaciones en librerías existentes."
+authors = [
+    { name = "manuel48265", email = "manuelsantana@correo.ugr.es" }
+]
+requires-python = ">=3.12"
+dependencies = []
+
+[build-system]
+requires = ["uv_build>=0.12.16,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
