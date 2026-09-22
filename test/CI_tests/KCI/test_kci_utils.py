@@ -2,7 +2,10 @@ import numpy as np
 import pytest
 
 from src.CI_tests.KCI import kci_utils
-from src.CI_tests.KCI.kci_utils import center_kernel_matrix, center_kernel_matrix_regression
+from src.CI_tests.KCI.kci_utils import (
+    center_kernel_matrix,
+    center_kernel_matrix_regression,
+)
 
 
 def test_center_kernel_matrix_matches_literal_HKH() -> None:
