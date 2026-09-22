@@ -2,31 +2,41 @@ import numpy as np
 import pytest
 
 from test.methods import METHODS, RegisteredMethod
-from test.scenarios import SCENARIOS, ResidualScenario
+from test.scenarios import SCENARIOS, Scenario
 
 EPSILON = 1e-6
+RNG_SEED = 0
 
 
 @pytest.mark.parametrize("scenario", SCENARIOS, ids=lambda s: s.name)
 @pytest.mark.parametrize("method", METHODS, ids=lambda m: m.name)
-def test_python_matches_reference(method: RegisteredMethod, scenario: ResidualScenario) -> None:
+def test_python_matches_reference(method: RegisteredMethod, scenario: Scenario) -> None:
     """Every registered method must match its reference on every scenario.
 
-    🇬🇧 Feeds the same precomputed residuals to the Python port and the
-    reference implementation, so the comparison is fully deterministic
-    (no regressor/RNG involved) — an exact match up to floating-point
-    tolerance is expected, not just "same reject decision".
+    🇬🇧 Every scenario in `SCENARIOS` is generated once and adapted by each
+    method's own `build_kwargs` — the Python port and the reference
+    implementation always see identical inputs, so an exact match up to
+    floating-point tolerance is expected, not just "same reject decision".
+    The global RNG is reset to the same seed right before each call, since
+    some methods (KCI with `approx=False`) sample from it directly instead
+    of taking their own generator.
 
-    🇪🇸 Alimenta los mismos residuos precalculados al port en Python y a
-    la implementación de referencia, para que la comparación sea
-    totalmente determinista (sin regresor ni aleatoriedad de por medio)
-    — se espera coincidencia exacta salvo tolerancia de punto flotante,
-    no solo "la misma decisión de rechazo".
+    🇪🇸 Cada escenario de `SCENARIOS` se genera una vez y lo adapta el
+    `build_kwargs` propio de cada método — el port en Python y la
+    implementación de referencia ven siempre entradas idénticas, así que se
+    espera coincidencia exacta salvo tolerancia de punto flotante, no solo
+    "la misma decisión de rechazo". El RNG global se reinicia a la misma
+    semilla justo antes de cada llamada, porque algunos métodos (KCI con
+    `approx=False`) muestrean de él directamente en vez de recibir un
+    generador propio.
     """
-    resid_x, resid_y = scenario.generate(np.random.default_rng(0))
+    x, y, z = scenario.generate(np.random.default_rng(RNG_SEED))
+    kwargs = method.build_kwargs(x, y, z)
 
-    py = method.python_impl(resid_x_on_z=resid_x, resid_y_on_z=resid_y)
-    ref = method.reference_impl(resid_x_on_z=resid_x, resid_y_on_z=resid_y)
+    np.random.seed(RNG_SEED)
+    py = method.python_impl(**kwargs)
+    np.random.seed(RNG_SEED)
+    ref = method.reference_impl(**kwargs)
 
     assert py.statistic == pytest.approx(ref.statistic, abs=EPSILON)
     assert py.p_value == pytest.approx(ref.p_value, abs=EPSILON)

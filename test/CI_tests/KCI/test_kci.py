@@ -48,7 +48,7 @@ def test_KCI_V_statistic_reuse_matches_independent_recompute() -> None:
     Ky = _random_kernel(rng, n)
     Kz = _random_kernel(rng, n)
     epsilon = 1e-3
-    kci = KCI(use_gp=False, epsilon_x=epsilon, epsilon_y=epsilon)
+    kci = KCI(epsilon_x=epsilon, epsilon_y=epsilon)
 
     _, KxR, KyR_reused = kci.KCI_V_statistic(Kx, Ky, Kz, Kz)
 

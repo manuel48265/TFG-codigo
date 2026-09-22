@@ -58,7 +58,6 @@ class KCI:
     def __init__(
         self,
         nullss: int = 5000,
-        use_gp: bool = False,
         approx: bool = True,
         thresh: float = 1e-5,
         alpha: float = 0.05,
@@ -69,7 +68,6 @@ class KCI:
         kwidthz: float | None = None,
     ) -> None:
         self.nullss = nullss
-        self.use_gp = use_gp
         self.approx = approx
         self.thresh = thresh
         self.alpha = alpha
@@ -266,7 +264,7 @@ class KCI:
             residualizados.
         """
         KxR, Rzx = center_kernel_matrix_regression(Kx, Kzx, self.epsilon_x)
-        if self.epsilon_x != self.epsilon_y or self.use_gp:
+        if self.epsilon_x != self.epsilon_y:
             KyR, _ = center_kernel_matrix_regression(Ky, Kzy, self.epsilon_y)
         else:
             KyR = Rzx.dot(Ky).dot(Rzx)

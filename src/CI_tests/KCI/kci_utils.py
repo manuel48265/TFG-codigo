@@ -129,12 +129,20 @@ class GaussianKernel:
     def set_width_empirical(self, n: int, dim_z: int) -> None:
         """Set the width from the sample size and dim(Z) (CInd_test_new_withGP.m).
 
+        🇬🇧 The n<200/n<1200 boundaries follow causal-learn's port
+        (`set_width_empirical_kci`), not the original MATLAB (`T<=200`),
+        since causal-learn is what this is validated against at n=200.
+
+        🇪🇸 Los límites n<200/n<1200 siguen el port de causal-learn
+        (`set_width_empirical_kci`), no el MATLAB original (`T<=200`), ya
+        que es contra causal-learn contra quien se valida esto en n=200.
+
         Args:
             n: Sample size — Tamaño muestral.
             dim_z: Dimensionality of the conditioning set Z — Dimensionalidad
                 del conjunto de condicionamiento Z.
         """
-        if n <= 200:
+        if n < 200:
             width = 1.2
         elif n < 1200:
             width = 0.7

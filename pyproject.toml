@@ -41,5 +41,9 @@ disallow_incomplete_defs = true
 module = "rpy2.*"
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = "causallearn.*"
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
