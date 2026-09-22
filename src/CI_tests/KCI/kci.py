@@ -6,13 +6,14 @@ import numpy as np
 from numpy.linalg import eigh, eigvalsh
 from numpy.typing import NDArray
 
+from src.CI_tests.KCI.kci_utils import center_kernel_matrix, center_kernel_matrix_regression
 from src.CI_tests.common import CIResult
 
-thresh = 1e-5
-nullss = 5000
-
-
-def scaled_eigenvecs(K: NDArray[np.float64], thresh: float) -> NDArray[np.float64]:
+def scaled_eigenvecs(
+    K: NDArray[np.float64], 
+    thresh: float
+) -> NDArray[np.float64]:
+    
     w, v = eigh(0.5 * (K + K.T))
     idx = np.argsort(-w)
     w, v = w[idx], v[:, idx]
@@ -21,7 +22,9 @@ def scaled_eigenvecs(K: NDArray[np.float64], thresh: float) -> NDArray[np.float6
 
 
 def get_eigenvects_prod(
-    Kx: NDArray[np.float64], Ky: NDArray[np.float64]
+    Kx: NDArray[np.float64], 
+    Ky: NDArray[np.float64],
+    thresh : float
 ) -> tuple[NDArray[np.float64], int]:
     scaled_eigenvecs_x = scaled_eigenvecs(Kx, thresh)
     scaled_eigenvecs_y = scaled_eigenvecs(Ky, thresh)
@@ -42,7 +45,10 @@ def get_eigenvects_prod(
     return eigenvects_prod, n_components
 
 
-def get_kappa(eigenvecs_product: NDArray[np.float64]) -> tuple[np.float64, np.float64]:
+def get_kappa(
+    eigenvecs_product: NDArray[np.float64]
+) -> tuple[np.float64, np.float64]:
+    
     approx_mean = np.trace(eigenvecs_product)
     approx_var = 2 * np.trace(eigenvecs_product.dot(eigenvecs_product))
     approx_k = approx_mean**2 / approx_var
@@ -51,7 +57,11 @@ def get_kappa(eigenvecs_product: NDArray[np.float64]) -> tuple[np.float64, np.fl
 
 
 def null_sample(
-    eigenvecs_prod: NDArray[np.float64], n_components: int, sample_size: int
+    eigenvecs_prod: NDArray[np.float64], 
+    n_components: int, 
+    sample_size: int, 
+    thresh : float,
+    nullss : int
 ) -> NDArray[np.float64]:
 
     eigen = eigvalsh(eigenvecs_prod)
@@ -64,6 +74,34 @@ def null_sample(
 
     return null_distribution
 
+def compute_pvalue():
+    return
 
-def KCI() -> CIResult:
+def kernel_matrix():
+    return
+
+def KCI_V_statistic(
+    Kx : NDArray[np.float64],
+    Ky : NDArray[np.float64],
+    Kzx : NDArray[np.float64],
+    Kzy : NDArray[np.float64],
+    epsilon_x : float,
+    epsilon_y : float
+) -> tuple[np.float64,NDArray[np.float64],NDArray[np.float64]]:
+    KxR, Rzx = center_kernel_matrix_regression(kx,kzx,epsilon_x)
+    return
+
+
+def KCI(
+    kernelX,
+    kernelY,
+    kernelZ,
+    nullss,
+    est_width,
+    use_gp,
+    approx,
+    kwidthx=None,
+    kwidthy=None,
+    kwidthz=None
+) -> CIResult:
     return CIResult(statistic=0, p_value=0, reject=True)
