@@ -7,12 +7,16 @@ from numpy.typing import NDArray
 @dataclass
 class CIResult:
     """🇬🇧 Common result contract for any CI test (shared across methods).
+    `statistic` is None when a reference implementation's public API
+    doesn't expose one (e.g. causal-learn's FisherZ only returns a p-value).
 
     🇪🇸 Contrato de resultado común para cualquier test de CI (compartido
-    entre métodos).
+    entre métodos). `statistic` es None cuando la API pública de una
+    implementación de referencia no expone ninguno (p. ej. FisherZ de
+    causal-learn solo devuelve un p-valor).
     """
 
-    statistic: float
+    statistic: float | None
     p_value: float
     reject: bool
 

@@ -5,8 +5,10 @@ import numpy as np
 from numpy.typing import NDArray
 
 from src.CI_tests.common import CIResult
+from src.CI_tests.Fisher_Z.fisher_z import fisher_z_test
 from src.CI_tests.GCM.gcm import gcm_test
 from src.CI_tests.KCI.kci import kci_test
+from test.CI_tests.Fisher_Z.fisher_z_causallearn_bridge import fisher_z_test_causallearn
 from test.CI_tests.GCM.gcm_r_bridge import gcm_test_r
 from test.CI_tests.KCI.kci_causallearn_bridge import kci_test_causallearn
 
@@ -67,8 +69,15 @@ def _kci_bootstrap_kwargs(
     return _kci_kwargs(x, y, z) | {"approx": False}
 
 
+def _fisher_z_kwargs(
+    x: NDArray[np.float64], y: NDArray[np.float64], z: NDArray[np.float64]
+) -> dict[str, object]:
+    return {"x": x, "y": y, "z": z}
+
+
 METHODS = [
     RegisteredMethod("gcm", gcm_test, gcm_test_r, _gcm_kwargs),
     RegisteredMethod("kci", kci_test, kci_test_causallearn, _kci_kwargs),
     RegisteredMethod("kci_bootstrap", kci_test, kci_test_causallearn, _kci_bootstrap_kwargs),
+    RegisteredMethod("fisher_z", fisher_z_test, fisher_z_test_causallearn, _fisher_z_kwargs),
 ]
