@@ -4,7 +4,7 @@ import pytest
 from test.methods import METHODS, RegisteredMethod
 from test.scenarios import SCENARIOS, ResidualScenario
 
-EPSILON = 1e-6
+EPSILON = 1e-9
 
 
 @pytest.mark.parametrize("scenario", SCENARIOS, ids=lambda s: s.name)
