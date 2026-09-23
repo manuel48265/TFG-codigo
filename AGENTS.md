@@ -19,6 +19,11 @@ It's independent from `~/Escritorio/TFG/codigo` (where the literature review liv
   check what's actually in the repo — don't invent it out of thin air.
 - If you add new working instructions, edit them here (not in `CLAUDE.md`) so
   they apply equally to any agent.
+- Shared, untracked memory across agents (Claude Code, Codex, etc.) lives in
+  `agents-utils/MEMORIA_COMPARTIDA.md` (gitignored). Read it at the start of
+  a session if present, and add an entry there when the user corrects a
+  code-related approach that should stick — same idea as this file, but for
+  fast-moving corrections instead of stable conventions.
 - Type hints are mandatory: `ruff` (rule `ANN`) and `mypy` (`disallow_untyped_defs`,
   `disallow_incomplete_defs`) are configured in `pyproject.toml` and enforce this.
   Run `uv run ruff check .` and `uv run mypy src test` before considering Python work done.

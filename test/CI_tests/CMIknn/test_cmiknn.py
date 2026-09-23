@@ -1,6 +1,6 @@
 import numpy as np
 
-from src.CI_tests.CMIknn.CMIknn import rank_transform
+from src.CI_tests.CMIknn.CMIknn import CMIknn
 
 
 def test_ranks_1d_data_descending_without_ties() -> None:
@@ -14,7 +14,7 @@ def test_ranks_1d_data_descending_without_ties() -> None:
     """
     x = np.array([30.0, 10.0, 20.0])
 
-    result = rank_transform(x)
+    result = CMIknn()._rank_transform(x)
 
     assert result.shape == x.shape
     assert result.tolist() == [2.0, 0.0, 1.0]
@@ -31,7 +31,7 @@ def test_breaks_ties_into_a_valid_permutation() -> None:
     """
     x = np.array([1.0, 1.0, 2.0, 5.0])
 
-    result = rank_transform(x)
+    result = CMIknn()._rank_transform(x)
 
     assert result[3] == 3.0
     assert result[2] == 2.0
@@ -46,7 +46,7 @@ def test_ranks_each_column_of_2d_data_independently() -> None:
     """
     z = np.array([[30.0, 1.0], [10.0, 3.0], [20.0, 2.0]])
 
-    result = rank_transform(z)
+    result = CMIknn()._rank_transform(z)
 
     assert result.shape == z.shape
     assert result[:, 0].tolist() == [2.0, 0.0, 1.0]  # [30, 10, 20]

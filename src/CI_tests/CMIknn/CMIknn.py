@@ -1,20 +1,4 @@
 """
-# Algoritmo 1 del paper
-def _local_permutation(z (n,dz)|None, k_perm, rng) -> perm (n,):
-    if z is None:
-        return rng.permutation(n)   # sin Z, permutación global normal
-    neighbor_lists = cKDTree(z).query(z, k=k_perm, p=inf)[índices]  # incl. self como vecino 0
-    shuffle cada fila de neighbor_lists
-    used = set()
-    perm = array vacío de tamaño n
-    for i in rng.permutation(n):          # orden aleatorio de visita
-        for candidato in neighbor_lists[i]:
-            if candidato not in used:
-                perm[i] = candidato; used.add(candidato); break
-        else:
-            perm[i] = neighbor_lists[i][0]   # agotados los k_perm-1 intentos: con reemplazo
-    return perm
-
 # Eq. 6: p-valor por Monte Carlo
 def _shuffle_pvalue(x, y, z, k, k_perm, n_perm, observed, rng) -> float:
     null_dist = []
@@ -46,10 +30,14 @@ from src.CI_tests.common import CIResult
 
 
 class CMIknn:
-    def __init__(self, knn: int | float, seed: int) -> None:
+    def __init__(
+        self, knn: int | float = 0.2, k_perm: int = 5, sig_samples: int = 500, seed: int = 0
+    ) -> None:
 
         self.random_state = np.random.default_rng(seed=seed)
         self.knn = knn
+        self.k_perm = k_perm
+        self.sig_samples = sig_samples
 
     ######################################################################################
     # Rank transform
@@ -79,7 +67,7 @@ class CMIknn:
 
     ######################################################################################
     # Equation 5 in the paper
-    def cmi_estimator(
+    def _cmi_estimator(
         k: int, k_z: NDArray[np.int64], k_xz: NDArray[np.int64], k_yz: NDArray[np.int64]
     ) -> float:
         return special.digamma(k) + np.mean(
@@ -95,7 +83,11 @@ class CMIknn:
     # less than quadratically with the sample size.
 
     def _neighbor_counts(
-        x: NDArray[np.float64], y: NDArray[np.float64], z: NDArray[np.float64] | None, knn: int
+        self,
+        x: NDArray[np.float64],
+        y: NDArray[np.float64],
+        z: NDArray[np.float64] | None,
+        knn: int,
     ) -> tuple[NDArray[np.int64], NDArray[np.int64], NDArray[np.int64]]:
         size: int = x.shape[0]
         joint: NDArray[np.float64] = np.stack(x, y, z) if z is not None else np.stack(x, y)
@@ -121,6 +113,58 @@ class CMIknn:
         return k_xz, k_yz, k_z
 
     ######################################################################################
+    # algorithm 1:
+    def _local_permutation(self, z: NDArray[np.float64]) -> NDArray[np.int32]:
+
+        neighbors = (
+            spatial.cKDTree(z).query(z, k=self.k_perm, p=np.inf, eps=0.0)[1].astype(np.int32)
+        )
+
+        for i in range(len(neighbors)):
+            self.random_state.shuffle(neighbors[i])
+
+        used = set()
+        permutation = np.zeros(z.shape[0], dtype=np.int32)
+        for sample_index in self.random_state.permutation(z.shape[0]).astype(np.int32):
+            m = 0
+            use = neighbors[sample_index, m]
+
+            while (use in used) and (m < self.k_perm - 1):
+                m += 1
+                use = neighbors[sample_index, m]
+
+            permutation[sample_index] = use
+            used.add(use)
+
+        return permutation
+
+    ######################################################################################
+    # Equation 6:
+    def _calc_pvalue(
+        self,
+        x: NDArray[np.float64],
+        y: NDArray[np.float64],
+        z: NDArray[np.float64] | None,
+        value: float,
+    ) -> float:
+        sample_size = y.shape[0]
+        knn = self._get_knn(sample_size)
+        null_dist = np.zeros(self.sig_samples)
+
+        for b in range(self.sig_samples):
+            if z is None:
+                perm = self.random_state.permutation(sample_size)
+            else:
+                perm = self._local_permutation(z)
+
+            y_perm = y[perm]
+            k_xz, k_yz, k_z = self._neighbor_counts(x, y_perm, z, knn)
+            null_dist[b] = self._cmi_estimator(knn, k_z, k_xz, k_yz)
+
+        # Empirical Monte Carlo
+        pval = float(np.sum(null_dist >= value) + 1) / (self.sig_samples + 1)
+
+        return pval
 
 
 def CMIknn_test(
