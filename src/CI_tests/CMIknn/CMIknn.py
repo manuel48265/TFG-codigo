@@ -134,7 +134,7 @@ class CMIknn:
 
         for b in range(self.sig_samples):
             if z is None:
-                perm = self.random_state.permutation(sample_size)
+                perm = self.random_state.permutation(sample_size).astype(np.int32)
             else:
                 perm = self._local_permutation(z)
 
@@ -166,3 +166,29 @@ class CMIknn:
         value = self._cmi_estimator(knn, k_z, k_xz, k_yz)
         p_value = self._calc_pvalue(x, y, z, value, knn)
         return CIResult(statistic=value, p_value=p_value, reject=(p_value < alpha))
+
+
+def cmiknn_test(
+    x: NDArray[np.float64],
+    y: NDArray[np.float64],
+    z: NDArray[np.float64] | None = None,
+    alpha: float = 0.05,
+    **kwargs: object,
+) -> CIResult:
+    """Test conditional independence via the KNN-based conditional mutual
+    information test.
+
+    Args:
+        x: X sample — Muestra de X.
+        y: Y sample — Muestra de Y.
+        z: Z sample, or None for an unconditional test — Muestra de Z, o
+            None para un test incondicional.
+        alpha: Significance level — Nivel de significación.
+        **kwargs: Forwarded to `CMIknn.__init__` — Reenviados a
+            `CMIknn.__init__`.
+
+    Returns:
+        CIResult with the test statistic, p-value and reject decision —
+        CIResult con el estadístico, el p-valor y la decisión de rechazo.
+    """
+    return CMIknn(**kwargs).CMIknn_test(x, y, z, alpha)  # type: ignore[arg-type]
