@@ -50,7 +50,10 @@ class VariableType(StrEnum):
 
 
 class MixedCI:
-    def _variable_type(series: pd.Series) -> VariableType:
+    def __init__(self) -> None:
+        return None
+
+    def _variable_type(self, series: pd.Series) -> VariableType:
         if series.nunique() == 2:
             return VariableType.BINARY
         elif isinstance(series.dtype, pd.CategoricalDtype):
@@ -58,6 +61,6 @@ class MixedCI:
         return VariableType.CONTINUOUS
 
     def mixed_ci_test(
-        data: pd.DataFrame, x: str, y: str, z: list[str] | None = None, alpha: float = 0.05
+        self, data: pd.DataFrame, x: str, y: str, z: list[str] | None = None, alpha: float = 0.05
     ) -> CIResult:
-        pass
+        return CIResult(statistic=0, p_value=0, reject=True)
