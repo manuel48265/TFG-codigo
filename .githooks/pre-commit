@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -e
+
+files=$(git diff --cached --name-only --diff-filter=ACM -- '*.py')
+
+if [ -n "$files" ]; then
+    uv run ruff format $files
+    uv run ruff check --fix $files
+    git add $files
+fi

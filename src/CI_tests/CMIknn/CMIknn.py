@@ -1,32 +1,4 @@
-# Test de permutaciones
-# Calculo de CMI
-# Null distribution
-
 """
-
-# helper: aplicar tie-break noise + rank transform a una matriz de columnas
-def _rank_transform(data (n, d)) -> (n, d):
-    data += ruido_gaussiano_pequeño(escala ~ 1e-6 * std por columna)
-    return rank(data, por columna)  # argsort().argsort()
-
-# paso 1+2 del §2.2: contar vecinos en los subespacios
-def _neighbor_counts(x (n,dx), y (n,dy), z (n,dz)|None, k) -> (k_xz, k_yz, k_z):
-    joint = stack(x, y, z)                       # si z es None, joint = stack(x, y)
-    eps = cKDTree(joint).query(joint, k=k+1, p=inf)[k-ésima columna]  # excluye self
-    eps *= 0.999999999                           # para "<" estricto
-
-    k_xz = cKDTree(stack(x, z)).query_ball_point(stack(x,z), r=eps, p=inf, return_length=True)
-    k_yz = cKDTree(stack(y, z)).query_ball_point(stack(y,z), r=eps, p=inf, return_length=True)
-    if z is not None:
-        k_z = cKDTree(z).query_ball_point(z, r=eps, p=inf, return_length=True)
-    else:
-        k_z = full(n, n)   # sin Z, todos son "vecinos" en el espacio trivial
-    return k_xz, k_yz, k_z
-
-# Eq. 5
-def _cmi_estimate(k, k_xz, k_yz, k_z) -> float:
-    return digamma(k) + mean(digamma(k_z) - digamma(k_xz) - digamma(k_yz))
-
 # Algoritmo 1 del paper
 def _local_permutation(z (n,dz)|None, k_perm, rng) -> perm (n,):
     if z is None:
@@ -68,39 +40,90 @@ def cmiknn_test(x, y, z=None, k=0.2, k_perm=5, n_perm=1000, alpha=0.05, seed=Non
 
 import numpy as np
 from numpy.typing import NDArray
-from scipy import special
+from scipy import spatial, special
 
 from src.CI_tests.common import CIResult
 
-r = np.random.default_rng(seed=0)
 
-# Rank transform
-# we rank-transform the samples individually in
-# each dimension: Firstly, to avoid points with equal
-# distance, small amplitude random noise is added to break ties.
+class CMIknn:
+    def __init__(self, knn: int | float, seed: int) -> None:
 
-# Then, for all n values x1 , . . . , xn , we
-# replace xi with the transformed value r, where r is
-# defined such that xi is the rth largest among all x values.
+        self.random_state = np.random.default_rng(seed=seed)
+        self.knn = knn
+
+    ######################################################################################
+    # Rank transform
+    # we rank-transform the samples individually in
+    # each dimension: Firstly, to avoid points with equal
+    # distance, small amplitude random noise is added to break ties.
+
+    # Then, for all n values x1 , . . . , xn , we
+    # replace xi with the transformed value r, where r is
+    # defined such that xi is the rth largest among all x values.
+
+    # In the oficial implementation they have chosen ascensing order
+    # intead of descending as they say in the paper.
+    def _rank_transform(self, data: NDArray[np.float64]) -> NDArray[np.float64]:
+        data = data + (
+            1e-6 * data.std(axis=0, keepdims=True) * self.random_state.random(data.shape)
+        )
+        return data.argsort(axis=0).argsort(axis=0).astype(np.float64)
+
+    ######################################################################################
+    # easier way to get the exact amount of neighbor we are going to use
+    def _get_knn(self, sample_size: int) -> int:
+        if self.knn < 1:
+            return max(1, int(self.knn * sample_size))
+        else:
+            return max(1, int(self.knn))
+
+    ######################################################################################
+    # Equation 5 in the paper
+    def cmi_estimator(
+        k: int, k_z: NDArray[np.int64], k_xz: NDArray[np.int64], k_yz: NDArray[np.int64]
+    ) -> float:
+        return special.digamma(k) + np.mean(
+            special.digamma(k_z) - special.digamma(k_xz) - special.digamma(k_yz)
+        )
+
+    ######################################################################################
+    # The main computational cost comes from
+    # searching nearest neighbors in the high dimensional
+    # subspaces which we speed up using KD-tree neighbor
+    # search (Maneewongvatana and Mount, 1999). Hence,
+    # the computational complexity will typically scale
+    # less than quadratically with the sample size.
+
+    def _neighbor_counts(
+        x: NDArray[np.float64], y: NDArray[np.float64], z: NDArray[np.float64] | None, knn: int
+    ) -> tuple[NDArray[np.int64], NDArray[np.int64], NDArray[np.int64]]:
+        size: int = x.shape[0]
+        joint: NDArray[np.float64] = np.stack(x, y, z) if z is not None else np.stack(x, y)
+        tree = spatial.cKDTree(joint)
+        eps = tree.query(joint, k=[knn + 1], p=np.inf)
+
+        # From the original implementation
+        # To search neighbors < eps instead of <= eps, we need to reduce eps by a bit
+        eps = np.multiply(eps, 0.999999999)
+
+        k_xz = spatial.cKDTree(np.stack(x, z)).query_ball_point(
+            np.stack(x, z), r=eps, p=np.inf, return_length=True
+        )
+        k_yz = spatial.cKDTree(np.stack(y, z)).query_ball_point(
+            np.stack(y, z), r=eps, p=np.inf, return_length=True
+        )
+
+        if z is not None:
+            k_z = spatial.cKDTree(z).query_ball_point(z, r=eps, p=np.inf, return_length=True)
+        else:
+            k_z = np.full(size, size, dtype=np.float64)
+
+        return k_xz, k_yz, k_z
+
+    ######################################################################################
 
 
-# In the oficial implementation they have chosen ascensing order
-# intead of descending as they say in the paper.
-def rank_transform(data: NDArray[np.float64]) -> NDArray[np.float64]:
-    data = data + (1e-6 * data.std(axis=0, keepdims=True) * r.random(data.shape))
-    return data.argsort(axis=0).argsort(axis=0).astype(np.float64)
-
-
-# Equation 5 in the paper
-def cmi_estimator(
-    k: int, k_z: NDArray[np.int64], k_xz: NDArray[np.int64], k_yz: NDArray[np.int64]
-) -> float:
-    return special.digamma(k) + np.mean(
-        special.digamma(k_z) - special.digamma(k_xz) - special.digamma(k_yz)
-    )
-
-
-def CMIknn(
+def CMIknn_test(
     x: NDArray[np.float64],
     y: NDArray[np.float64],
     z: NDArray[np.float64] | None = None,
