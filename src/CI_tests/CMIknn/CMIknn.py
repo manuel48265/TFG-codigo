@@ -1,5 +1,5 @@
 # Test de permutaciones
-# Calculo de CMI 
+# Calculo de CMI
 # Null distribution
 
 """
@@ -51,7 +51,8 @@ def _shuffle_pvalue(x, y, z, k, k_perm, n_perm, observed, rng) -> float:
         x_perm = x[perm]                  # el paper permuta X; tigramite por defecto permuta Y
         k_xz, k_yz, k_z = _neighbor_counts(x_perm, y, z, k)
         null_dist.append(_cmi_estimate(k, k_xz, k_yz, k_z))
-    return mean(null_dist >= observed)    # Eq. 6 tal cual; +1/(B+1) es un suavizado habitual, no está en el paper
+    return mean(null_dist >= observed)    # Eq. 6 tal cual; +1/(B+1) es un suavizado habitual,
+    no está en el paper
 
 # función pública, firma al estilo fisher_z_test
 def cmiknn_test(x, y, z=None, k=0.2, k_perm=5, n_perm=1000, alpha=0.05, seed=None) -> CIResult:
@@ -67,23 +68,41 @@ def cmiknn_test(x, y, z=None, k=0.2, k_perm=5, n_perm=1000, alpha=0.05, seed=Non
 
 import numpy as np
 from numpy.typing import NDArray
+from scipy import special
+
 from src.CI_tests.common import CIResult
-from scipy import spatial,special
+
+r = np.random.default_rng(seed=0)
+
+# Rank transform
+# we rank-transform the samples individually in
+# each dimension: Firstly, to avoid points with equal
+# distance, small amplitude random noise is added to break ties.
+
+# Then, for all n values x1 , . . . , xn , we
+# replace xi with the transformed value r, where r is
+# defined such that xi is the rth largest among all x values.
+
+
+# In the oficial implementation they have chosen ascensing order
+# intead of descending as they say in the paper.
+def rank_transform(data: NDArray[np.float64]) -> NDArray[np.float64]:
+    data = data + (1e-6 * data.std(axis=0, keepdims=True) * r.random(data.shape))
+    return data.argsort(axis=0).argsort(axis=0).astype(np.float64)
+
 
 # Equation 5 in the paper
 def cmi_estimator(
-    k: int,
-    k_z : NDArray[np.int64],
-    k_xz : NDArray[np.int64],
-    k_yz : NDArray[np.int64]
+    k: int, k_z: NDArray[np.int64], k_xz: NDArray[np.int64], k_yz: NDArray[np.int64]
 ) -> float:
-    return special.digamma(k) + np.mean(special.digamma(k_z) - special.digamma(k_xz) - special.digamma(k_yz))
+    return special.digamma(k) + np.mean(
+        special.digamma(k_z) - special.digamma(k_xz) - special.digamma(k_yz)
+    )
 
 
-def CMIknn(    
+def CMIknn(
     x: NDArray[np.float64],
     y: NDArray[np.float64],
     z: NDArray[np.float64] | None = None,
-
-)-> CIResult:
-    pass 
+) -> CIResult:
+    pass
