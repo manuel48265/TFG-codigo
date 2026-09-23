@@ -10,8 +10,10 @@ dependencies = [
     "causal-learn>=0.1.4.8",
     "numba>=0.67.0",
     "numpy>=2.5.3",
+    "pandas>=3.0.6",
     "scikit-learn>=1.9.1",
     "scipy>=1.18.1",
+    "statsmodels>=0.15.0",
     "tigramite>=5.2.10.1",
     "xgboost>=3.4.1",
 ]
