@@ -7,13 +7,19 @@ from src.CI_tests.common import CIResult
 
 class CMIknn:
     def __init__(
-        self, knn: int | float = 0.2, k_perm: int = 5, sig_samples: int = 500, seed: int = 0
+        self,
+        knn: int | float = 0.2,
+        k_perm: int = 5,
+        sig_samples: int = 500,
+        seed: int = 0,
+        workers: int = -1,
     ) -> None:
 
         self.random_state = np.random.default_rng(seed=seed)
         self.knn = knn
         self.k_perm = k_perm
         self.sig_samples = sig_samples
+        self.workers = workers
 
     ######################################################################################
     # Rank transform
@@ -70,7 +76,9 @@ class CMIknn:
             np.column_stack((x, y, z)) if z is not None else np.column_stack((x, y))
         )
         tree = spatial.cKDTree(joint)
-        eps = tree.query(joint, k=[knn + 1], p=np.inf)[0][:, 0].astype(np.float64)
+        eps = tree.query(joint, k=[knn + 1], p=np.inf, workers=self.workers)[0][:, 0].astype(
+            np.float64
+        )
 
         # From the original implementation
         # To search neighbors < eps instead of <= eps, we need to reduce eps by a bit
@@ -87,16 +95,18 @@ class CMIknn:
         # refactor pass if there's time.
         joint_x_z = np.column_stack((x, z)) if z is not None else x
         k_xz = spatial.cKDTree(joint_x_z).query_ball_point(
-            joint_x_z, r=eps, p=np.inf, return_length=True
+            joint_x_z, r=eps, p=np.inf, return_length=True, workers=self.workers
         )
 
         joint_y_z = np.column_stack((y, z)) if z is not None else y
         k_yz = spatial.cKDTree(joint_y_z).query_ball_point(
-            joint_y_z, r=eps, p=np.inf, return_length=True
+            joint_y_z, r=eps, p=np.inf, return_length=True, workers=self.workers
         )
 
         if z is not None:
-            k_z = spatial.cKDTree(z).query_ball_point(z, r=eps, p=np.inf, return_length=True)
+            k_z = spatial.cKDTree(z).query_ball_point(
+                z, r=eps, p=np.inf, return_length=True, workers=self.workers
+            )
         else:
             k_z = np.full(size, size, dtype=np.float64)
 
@@ -108,7 +118,11 @@ class CMIknn:
     # fixed for the whole sig_samples loop in _calc_pvalue — so it's built
     # once and reused across every draw instead of once per draw.
     def _local_permutation_neighbors(self, z: NDArray[np.float64]) -> NDArray[np.int32]:
-        return spatial.cKDTree(z).query(z, k=self.k_perm, p=np.inf, eps=0.0)[1].astype(np.int32)
+        return (
+            spatial.cKDTree(z)
+            .query(z, k=self.k_perm, p=np.inf, eps=0.0, workers=self.workers)[1]
+            .astype(np.int32)
+        )
 
     ######################################################################################
     # algorithm 1, given an already-built neighbor list (see
