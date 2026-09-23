@@ -76,6 +76,15 @@ class CMIknn:
         # To search neighbors < eps instead of <= eps, we need to reduce eps by a bit
         eps = np.multiply(eps, 0.999999999)
 
+        # ponytail: cKDTree(joint_x_z) and cKDTree(z) are rebuilt on every
+        # call even though x/z never change across the sig_samples loop in
+        # _calc_pvalue (only y_perm does) — unlike tigramite, which supports
+        # permuting either X or Y and so can't statically know which side is
+        # invariant, this port always permutes Y (see _calc_pvalue), so both
+        # trees here are safe to hoist out and reuse the same way
+        # _local_permutation_neighbors already does for the permutation
+        # step. Left as a TODO, not done now — pick it up in the planned
+        # refactor pass if there's time.
         joint_x_z = np.column_stack((x, z)) if z is not None else x
         k_xz = spatial.cKDTree(joint_x_z).query_ball_point(
             joint_x_z, r=eps, p=np.inf, return_length=True
@@ -94,19 +103,25 @@ class CMIknn:
         return k_xz, k_yz, k_z
 
     ######################################################################################
-    # algorithm 1:
-    def _local_permutation(self, z: NDArray[np.float64]) -> NDArray[np.int32]:
+    # Ni in algorithm 1: k_perm nearest neighbors in Z for each sample.
+    # Doesn't depend on which shuffle draw we're on — only on z, which is
+    # fixed for the whole sig_samples loop in _calc_pvalue — so it's built
+    # once and reused across every draw instead of once per draw.
+    def _local_permutation_neighbors(self, z: NDArray[np.float64]) -> NDArray[np.int32]:
+        return spatial.cKDTree(z).query(z, k=self.k_perm, p=np.inf, eps=0.0)[1].astype(np.int32)
 
-        neighbors = (
-            spatial.cKDTree(z).query(z, k=self.k_perm, p=np.inf, eps=0.0)[1].astype(np.int32)
-        )
-
-        for i in range(len(neighbors)):
-            self.random_state.shuffle(neighbors[i])
+    ######################################################################################
+    # algorithm 1, given an already-built neighbor list (see
+    # _local_permutation_neighbors). Shuffles it in place: each call still
+    # draws a fresh, uniform per-row shuffle regardless of the array's
+    # state going in, so reusing the same array across calls is safe.
+    def _local_permutation(self, neighbors: NDArray[np.int32]) -> NDArray[np.int32]:
+        for row in neighbors:
+            self.random_state.shuffle(row)
 
         used = set()
-        permutation = np.zeros(z.shape[0], dtype=np.int32)
-        for sample_index in self.random_state.permutation(z.shape[0]).astype(np.int32):
+        permutation = np.zeros(neighbors.shape[0], dtype=np.int32)
+        for sample_index in self.random_state.permutation(neighbors.shape[0]).astype(np.int32):
             m = 0
             use = neighbors[sample_index, m]
 
@@ -131,12 +146,13 @@ class CMIknn:
     ) -> float:
         sample_size = y.shape[0]
         null_dist = np.zeros(self.sig_samples)
+        neighbors = self._local_permutation_neighbors(z) if z is not None else None
 
         for b in range(self.sig_samples):
-            if z is None:
+            if neighbors is None:
                 perm = self.random_state.permutation(sample_size).astype(np.int32)
             else:
-                perm = self._local_permutation(z)
+                perm = self._local_permutation(neighbors)
 
             y_perm = y[perm]
             k_xz, k_yz, k_z = self._neighbor_counts(x, y_perm, z, knn)
