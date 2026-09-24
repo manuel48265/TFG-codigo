@@ -8,6 +8,7 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "causal-learn>=0.1.4.8",
+    "mypy>=2.3.1",
     "numba>=0.67.0",
     "numpy>=2.5.3",
     "pandas>=3.0.6",
@@ -53,6 +54,10 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "tigramite.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "statsmodels.*"
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
