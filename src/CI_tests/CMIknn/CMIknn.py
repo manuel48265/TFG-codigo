@@ -93,12 +93,12 @@ class CMIknn:
         # _local_permutation_neighbors already does for the permutation
         # step. Left as a TODO, not done now — pick it up in the planned
         # refactor pass if there's time.
-        joint_x_z = np.column_stack((x, z)) if z is not None else x
+        joint_x_z = np.column_stack((x, z)) if z is not None else x.reshape(-1, 1)
         k_xz = spatial.cKDTree(joint_x_z).query_ball_point(
             joint_x_z, r=eps, p=np.inf, return_length=True, workers=self.workers
         )
 
-        joint_y_z = np.column_stack((y, z)) if z is not None else y
+        joint_y_z = np.column_stack((y, z)) if z is not None else y.reshape(-1, 1)
         k_yz = spatial.cKDTree(joint_y_z).query_ball_point(
             joint_y_z, r=eps, p=np.inf, return_length=True, workers=self.workers
         )
