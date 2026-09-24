@@ -8,9 +8,7 @@ from scipy import stats
 from statsmodels.discrete.discrete_model import (
     BinaryResultsWrapper,
     MultinomialResultsWrapper,
-    OrderedResultsWrapper,
 )
-from statsmodels.miscmodels.ordinal_model import OrderedModel
 from statsmodels.regression.linear_model import RegressionResultsWrapper
 
 from src.CI_tests.common import CIResult
@@ -107,10 +105,46 @@ class MixedCI:
         design0: pd.DataFrame | None,
         design1: pd.DataFrame,
     ) -> tuple[float, float, int]:
-        mod0: OrderedResultsWrapper = OrderedModel(outcome, design0, distr="logit").fit(disp=0)
-        mod1: OrderedResultsWrapper = OrderedModel(outcome, design1, distr="logit").fit(disp=0)
+        n = outcome.shape[0]
+        exog0 = (
+            np.ones((n, 1)) if design0 is None else sm.add_constant(design0, has_constant="skip")
+        )
+        exog1 = sm.add_constant(design1, has_constant="skip")
 
-        return self._chi2_log_pvalue(mod0, mod1)
+        codes = outcome.cat.codes.to_numpy()
+        k = len(outcome.cat.categories)
+        n_thresholds = k - 1
+
+        def deviance(exog: np.ndarray | pd.DataFrame) -> float:
+            cump = np.empty((n, n_thresholds))
+            for j in range(1, n_thresholds + 1):
+                y_bin = (codes >= j).astype(int)
+                mod: BinaryResultsWrapper = sm.Logit(y_bin, exog).fit(disp=0)
+                cump[:, j - 1] = 1.0 - mod.predict(exog)
+
+            p = np.empty((n, k))
+            p[:, 0] = cump[:, 0]
+            p[:, 1:-1] = np.diff(cump, axis=1)
+            p[:, -1] = 1.0 - cump[:, -1]
+
+            negative_rows = np.any(p < 0, axis=1)
+            if negative_rows.any():
+                abs_p = np.abs(p[negative_rows])
+                p[negative_rows] = abs_p / abs_p.sum(axis=1, keepdims=True)
+
+            chosen = p[np.arange(n), codes]
+            return float(-2 * np.log(chosen).sum())
+
+        devi0 = deviance(exog0)
+        devi1 = deviance(exog1)
+
+        stat = devi0 - devi1
+        dof = n_thresholds * (exog1.shape[1] - exog0.shape[1])
+        return float(stats.chi2.logsf(stat, dof)), stat, dof
+
+    def _as_numeric_design(self, data: pd.Series | pd.DataFrame) -> pd.DataFrame:
+        frame = data.to_frame() if isinstance(data, pd.Series) else data
+        return pd.get_dummies(frame, drop_first=True, dtype=float)
 
     def _get_log_pvalue(
         self,
@@ -119,7 +153,11 @@ class MixedCI:
         z: pd.DataFrame | None,
     ) -> tuple[float, float, int]:
         outcome_type: VariableType = self._variable_type(outcome)
-        design1 = added.to_frame() if z is None else pd.concat([z, added], axis=1)
+        design0 = None if z is None else self._as_numeric_design(z)
+        added_design = self._as_numeric_design(added)
+        design1: pd.DataFrame = (
+            added_design if design0 is None else pd.concat([design0, added_design], axis=1)
+        )
 
         test_by_type = {
             VariableType.CONTINUOUS: self.continuous_test,
@@ -128,7 +166,7 @@ class MixedCI:
             VariableType.ORDINAL: self.ordinal_test,
         }
 
-        return test_by_type[outcome_type](outcome, z, design1)
+        return test_by_type[outcome_type](outcome, design0, design1)
 
     # Equation 1 (in log scale as ci.mm.R)
     def _combine_mm_log(self, log_p1: float, log_p2: float) -> float:
