@@ -3,7 +3,7 @@ import pytest
 from tigramite.independence_tests.cmiknn import CMIknn as TigramiteCMIknn
 
 from src.CI_tests.CMIknn.CMIknn import CMIknn, cmiknn_test
-from test.scenarios import SCENARIOS
+from test.scenarios import SCENARIOS, Scenario
 
 
 def test_ranks_1d_data_descending_without_ties() -> None:
@@ -56,67 +56,122 @@ def test_ranks_each_column_of_2d_data_independently() -> None:
     assert result[:, 1].tolist() == [0.0, 2.0, 1.0]  # [1, 3, 2]
 
 
-def test_calibration_fpr_and_power() -> None:
-    """🇬🇧 Matching cmiknn_test's p_value against tigramite's exactly isn't
-    possible (see the comment on the "cmiknn" entry in test/methods.py):
-    both compute the same CMI given the same permuted data (verified
-    directly), but sample different permutations from their RNG. What
-    actually certifies cmiknn_test's p_value is correct is this: under a
-    real null (independent scenario), the rejection rate at alpha=0.05
-    should sit near 5%; under a real, clear dependence (dependent
-    scenario), it should reject almost always. Measured together, not FPR
-    alone — a test that's just conservative (rejects too little) would
-    also show a low FPR without actually being calibrated.
-    seed_offset=1000 keeps these seeds distinct from other seed=0..N sweeps
-    elsewhere in the suite, so an unlucky seed here can't masquerade as
-    reappearing across unrelated tests.
+@pytest.mark.parametrize(
+    "knn_param,sample_size,expected",
+    [
+        (0.2, 100, 20),  # fraction branch: 0.2*100
+        (0.2, 10, 2),  # fraction branch, smaller n
+        (0.05, 10, 1),  # fraction branch rounds to 0 -> floored to 1
+        (5, 100, 5),  # absolute branch: >=1 taken as-is
+        (1, 100, 1),  # boundary: knn==1 is NOT knn<1, so absolute branch
+    ],
+)
+def test_get_knn_matches_precomputed_values(
+    knn_param: float, sample_size: int, expected: int
+) -> None:
+    assert CMIknn(knn=knn_param)._get_knn(sample_size) == expected
 
-    🇪🇸 Casar el p_value de cmiknn_test contra tigramite de forma exacta no
-    es posible (ver el comentario de la entrada "cmiknn" en
-    test/methods.py): ambos calculan el mismo CMI dado el mismo dato
-    permutado (verificado directamente), pero muestrean permutaciones
-    distintas de su RNG. Lo que de verdad certifica que el p_value de
-    cmiknn_test es correcto es esto: bajo un nulo real (escenario
-    independent), la tasa de rechazo a alpha=0.05 debe rondar el 5%; bajo
-    una dependencia real y clara (escenario dependent), debe rechazar casi
-    siempre. Medido junto, no solo FPR — un test simplemente conservador
-    (que rechaza de menos) también daría un FPR bajo sin estar realmente
-    calibrado. seed_offset=1000 mantiene estas semillas distintas de otros
-    barridos seed=0..N del resto de la suite, para que una semilla
-    desafortunada aquí no pueda parecer un problema que reaparece en tests
-    sin relación.
+
+def test_local_permutation_neighbors_matches_brute_force_knn() -> None:
+    """🇬🇧 Compares the KD-tree-based `_local_permutation_neighbors`
+    against a brute-force nearest-neighbor computation (plain sorting by
+    distance, an algorithmically independent path, not the same formula
+    reimplemented) on 1-D data simple enough to reason about by hand: two
+    well-separated clusters, so each point's k_perm=2 nearest neighbors
+    are unambiguous (no ties at the cluster boundary).
+
+    🇪🇸 Compara el `_local_permutation_neighbors` basado en KD-tree contra
+    un cálculo de vecinos más cercanos por fuerza bruta (ordenar por
+    distancia sin más, una vía algorítmicamente independiente, no la misma
+    fórmula reimplementada) sobre datos 1-D lo bastante simples para
+    razonarlos a mano: dos clusters bien separados, así que los k_perm=2
+    vecinos más cercanos de cada punto no son ambiguos (sin empates en el
+    borde entre clusters).
     """
-    independent = next(s for s in SCENARIOS if s.name == "independent")
-    dependent = next(s for s in SCENARIOS if s.name == "dependent")
-    seed_offset = 1000
-    sig_samples = 150
-    alpha = 0.05
+    z = np.array([[0.0], [1.0], [2.0], [100.0], [101.0], [102.0]])
+    k_perm = 2
 
-    n_rep_fpr = 30
-    rejections_h0 = 0
-    for i in range(n_rep_fpr):
-        x, y, z = independent.generate(np.random.default_rng(seed_offset + i))
-        result = cmiknn_test(x.reshape(-1, 1), y.reshape(-1, 1), z, sig_samples=sig_samples, seed=i)
-        rejections_h0 += result.reject
-    fpr = rejections_h0 / n_rep_fpr
+    neighbors = CMIknn(k_perm=k_perm)._local_permutation_neighbors(z)
 
-    n_rep_power = 15
-    rejections_h1 = 0
-    for i in range(n_rep_power):
-        x, y, z = dependent.generate(np.random.default_rng(seed_offset + n_rep_fpr + i))
-        result = cmiknn_test(x.reshape(-1, 1), y.reshape(-1, 1), z, sig_samples=sig_samples, seed=i)
-        rejections_h1 += result.reject
-    power = rejections_h1 / n_rep_power
-
-    # Generous upper bound (not a tight band around alpha): n_rep_fpr=30 makes
-    # a nominal-vs-observed comparison noisy, and the project favors FPR≈0
-    # over power (a low FPR isn't itself a red flag here), so only a clearly
-    # anti-conservative rate should fail this.
-    assert fpr <= 0.20, f"FPR={fpr:.2f} muy por encima de alpha={alpha} en {n_rep_fpr} réplicas"
-    assert power >= 0.8, f"potencia={power:.2f} demasiado baja en {n_rep_power} réplicas"
+    for i in range(len(z)):
+        distances = np.abs(z[:, 0] - z[i, 0])
+        distances[i] = np.inf  # exclude self from "brute force nearest OTHER points"
+        brute_force_nearest = set(np.argsort(distances)[: k_perm - 1])
+        # self is always among the k nearest neighbors of itself (distance 0);
+        # the other k_perm-1 slots must match the brute-force computation.
+        assert i in neighbors[i]
+        assert set(neighbors[i]) - {i} == brute_force_nearest
 
 
-def test_cmi_matches_tigramite_given_the_same_permutation() -> None:
+def test_local_permutation_output_always_drawn_from_declared_neighbors() -> None:
+    """🇬🇧 Hard invariant of `_local_permutation` (Algorithm 1): whatever
+    index it assigns to a point, that index must be one of the point's own
+    declared neighbors -- true regardless of collisions with `used`.
+
+    🇪🇸 Invariante duro de `_local_permutation` (Algoritmo 1): cualquier
+    índice que asigne a un punto tiene que ser uno de los vecinos
+    declarados de ese punto -- cierto pase lo que pase con las colisiones
+    de `used`.
+    """
+    rng = np.random.default_rng(0)
+    n, k_perm = 30, 4
+    neighbors = rng.integers(0, n, size=(n, k_perm)).astype(np.int32)
+
+    permutation = CMIknn(k_perm=k_perm, seed=0)._local_permutation(neighbors.copy())
+
+    for i in range(n):
+        assert permutation[i] in neighbors[i]
+
+
+def test_local_permutation_is_a_valid_permutation_when_k_perm_covers_all_points() -> None:
+    """🇬🇧 When every row lists all n indices as candidates (k_perm=n), a
+    pigeonhole argument guarantees no collision: by the time the last
+    not-yet-assigned point is processed, at most n-1 indices are in `used`,
+    and its row of n distinct candidates must contain one that isn't. So
+    the output must be a genuine bijection on 0..n-1 -- not just "drawn
+    from declared neighbors" (the weaker invariant above), a full
+    collision-free permutation.
+
+    🇪🇸 Cuando cada fila lista los n índices como candidatos (k_perm=n), un
+    argumento de palomar garantiza que no hay colisión: para cuando se
+    procesa el último punto sin asignar, `used` tiene como mucho n-1
+    índices, y su fila de n candidatos distintos tiene que contener uno que
+    no esté. Así que la salida tiene que ser una biyección genuina en
+    0..n-1 -- no solo "sacado de los vecinos declarados" (el invariante más
+    débil de arriba), una permutación completa sin colisiones.
+    """
+    n = 20
+    neighbors = np.tile(np.arange(n, dtype=np.int32), (n, 1))
+
+    permutation = CMIknn(k_perm=n, seed=0)._local_permutation(neighbors)
+
+    assert sorted(permutation.tolist()) == list(range(n))
+
+
+def test_unconditional_z_none_does_not_crash_and_distinguishes_dependence() -> None:
+    """🇬🇧 Regression test: z=None used to crash `_neighbor_counts` with
+    `ValueError: data must be of shape (n, m)`, since a bare 1D x/y falls
+    back to itself instead of a column vector (fixed by `.reshape(-1, 1)`).
+
+    🇪🇸 Test de regresión: z=None hacía fallar `_neighbor_counts` con
+    `ValueError: data must be of shape (n, m)`, porque un x/y 1D caía de
+    vuelta a sí mismo en vez de un vector columna (arreglado con
+    `.reshape(-1, 1)`).
+    """
+    rng = np.random.default_rng(0)
+    n = 300
+    x_dep = rng.standard_normal(n)
+    y_dep = 0.9 * x_dep + 0.3 * rng.standard_normal(n)
+
+    x_indep = rng.standard_normal(n)
+    y_indep = rng.standard_normal(n)
+
+    assert cmiknn_test(x_dep, y_dep, None).reject
+    assert not cmiknn_test(x_indep, y_indep, None).reject
+
+
+@pytest.mark.parametrize("scenario", SCENARIOS, ids=lambda s: s.name)
+def test_cmi_matches_tigramite_given_the_same_permutation(scenario: Scenario) -> None:
     """🇬🇧 Isolates the actual CMI computation (Eq. 5 + neighbor counting
     under a permuted Y) from the shuffle-test orchestration around it,
     which is what makes end-to-end p_value matching against tigramite
@@ -130,7 +185,16 @@ def test_cmi_matches_tigramite_given_the_same_permutation() -> None:
     `_neighbor_counts` against `_get_nearest_neighbors` (the k_xz/k_yz/k_z
     counts themselves, exact integers), then `_cmi_estimator` against the
     rest of `get_dependence_measure` (Eq. 5 applied to those counts). A
-    failure pinpoints which of the two sections diverged.
+    failure pinpoints which of the two sections diverged. Uses
+    `scenario.clean_seed` (pre-verified free of near-ties, see
+    test/scenarios.py's `has_near_tie` and test/test_scenarios.py) instead
+    of the scenario's arbitrary default seed — near-tied data makes which
+    of two values sorts first a coin flip decided by tie-break noise, and
+    since we and tigramite draw that noise from independent RNGs, a
+    mismatch there would reflect the two RNGs disagreeing on that coin
+    flip, not a formula bug (verified over thousands of cases in
+    experiments/verification/verify_cmiknn.py: 0 mismatches once near-ties
+    are excluded).
 
     🇪🇸 Aísla el cálculo de CMI en sí (Eq. 5 + conteo de vecinos bajo una Y
     permutada) de la orquestación del shuffle test alrededor, que es lo
@@ -146,10 +210,18 @@ def test_cmi_matches_tigramite_given_the_same_permutation() -> None:
     contra `_get_nearest_neighbors` (los conteos k_xz/k_yz/k_z en sí,
     enteros exactos), y luego `_cmi_estimator` contra el resto de
     `get_dependence_measure` (Eq. 5 aplicada a esos conteos). Un fallo
-    señala cuál de las dos secciones divergió.
+    señala cuál de las dos secciones divergió. Usa `scenario.clean_seed`
+    (verificado sin casi-empates, ver `has_near_tie` de test/scenarios.py y
+    test/test_scenarios.py) en vez de la semilla arbitraria por defecto del
+    escenario — con datos casi empatados, cuál de dos valores ordena
+    primero es una moneda al aire decidida por el ruido de desempate, y
+    como nosotros y tigramite sacamos ese ruido de RNGs independientes, un
+    desajuste ahí reflejaría que los dos RNGs discreparon en esa moneda al
+    aire, no un bug de fórmula (verificado sobre miles de casos en
+    experiments/verification/verify_cmiknn.py: 0 desajustes una vez se
+    excluyen los casi-empates).
     """
-    scenario = next(s for s in SCENARIOS if s.name == "independent")
-    x, y, z = scenario.generate(np.random.default_rng(0))
+    x, y, z = scenario.generate(np.random.default_rng(scenario.clean_seed))
     x2, y2, z2 = x.reshape(-1, 1), y.reshape(-1, 1), z
 
     ours = CMIknn(seed=0)

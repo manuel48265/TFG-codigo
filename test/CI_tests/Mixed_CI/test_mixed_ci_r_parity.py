@@ -14,7 +14,7 @@ from src.CI_tests.Mixed_CI.mixed_ci import MixedCI
 from test.CI_tests.Mixed_CI.mixed_ci_r_bridge import mixed_ci_test_r
 
 LOG_EPSILON = 1e-3
-RNG_SEED = 0
+N_SEEDS = 5  # R/rpy2 is slow per call; keeps the sweep's cost bounded
 
 
 @dataclass
@@ -72,12 +72,17 @@ SCENARIOS = [
 ]
 
 
+@pytest.mark.parametrize("seed", range(N_SEEDS))
 @pytest.mark.parametrize("scenario", SCENARIOS, ids=lambda s: s.name)
-def test_python_matches_r_reference(scenario: MixedScenario) -> None:
-    """Every scenario's reject decision must match R; p-value must match too
-    when the two sides use the same underlying model (`scenario.strict`).
+def test_python_matches_r_reference(scenario: MixedScenario, seed: int) -> None:
+    """Every scenario's reject decision must match R, across `N_SEEDS` draws
+    each — not just one, since mixed_ci_test has no internal randomness of
+    its own (unlike CMIknn's shuffle test) so there's no obstacle to
+    requiring agreement on more than a single lucky/unlucky seed. p-value
+    must match too when the two sides use the same underlying model
+    (`scenario.strict`).
     """
-    df = scenario.build(np.random.default_rng(RNG_SEED))
+    df = scenario.build(np.random.default_rng(seed))
 
     py = MixedCI().mixed_ci_test(df, "x", "y", ["z"])
     ref = mixed_ci_test_r(df, "x", "y", ["z"])

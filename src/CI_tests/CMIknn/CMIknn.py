@@ -13,6 +13,7 @@ class CMIknn:
         sig_samples: int = 500,
         seed: int = 0,
         workers: int = -1,
+        tie_break_ulps: float | None = None,
     ) -> None:
 
         self.random_state = np.random.default_rng(seed=seed)
@@ -20,6 +21,7 @@ class CMIknn:
         self.k_perm = k_perm
         self.sig_samples = sig_samples
         self.workers = workers
+        self.tie_break_ulps = tie_break_ulps
 
     ######################################################################################
     # Rank transform
@@ -33,10 +35,25 @@ class CMIknn:
 
     # In the oficial implementation they have chosen ascensing order
     # intead of descending as they say in the paper.
+
+    # tie_break_ulps=None (default) keeps the official implementation's
+    # std-relative noise. Passing a number switches to np.spacing (the
+    # float64 ULP at each value) scaled by that many ULPs instead: a
+    # std-relative scale can be coarser than genuine near-ties that
+    # nonlinear transforms can produce (found empirically: two values 3e-7
+    # apart in a cubic/tanh-transformed column, well inside a 1e-6*std-scale
+    # noise band on typical data) -- the noise then decides a real ordering
+    # instead of only breaking ties, making the tie-break itself a source of
+    # disagreement against any other implementation that tie-breaks
+    # independently (e.g. tigramite, see
+    # experiments/verification/verify_cmiknn.py). ULP-scaled noise can only
+    # ever flip values already equal to within floating-point precision.
     def _rank_transform(self, data: NDArray[np.float64]) -> NDArray[np.float64]:
-        data = data + (
-            1e-6 * data.std(axis=0, keepdims=True) * self.random_state.random(data.shape)
-        )
+        if self.tie_break_ulps is None:
+            noise_scale = 1e-6 * data.std(axis=0, keepdims=True)
+        else:
+            noise_scale = self.tie_break_ulps * np.abs(np.spacing(data))
+        data = data + noise_scale * self.random_state.random(data.shape)
         return data.argsort(axis=0).argsort(axis=0).astype(np.float64)
 
     ######################################################################################

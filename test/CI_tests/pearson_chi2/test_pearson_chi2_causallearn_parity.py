@@ -35,12 +35,19 @@ SCENARIOS: list[tuple[str, Callable[[np.random.Generator], pd.DataFrame]]] = [
     ("independent_unconditional", lambda rng: _df(rng, dependent=False, cond_dims=0)),
 ]
 
+N_SEEDS = 20  # pure Python on both sides, no R/rpy2 cost -- can afford more than Mixed-CI
 
+
+@pytest.mark.parametrize("seed", range(N_SEEDS))
 @pytest.mark.parametrize("name,build", SCENARIOS, ids=[s[0] for s in SCENARIOS])
 def test_python_matches_causallearn(
-    name: str, build: Callable[[np.random.Generator], pd.DataFrame]
+    name: str, build: Callable[[np.random.Generator], pd.DataFrame], seed: int
 ) -> None:
-    df = build(np.random.default_rng(0))
+    """Swept over `N_SEEDS` draws, not just one: pearson_chi2_test has no
+    internal randomness of its own, so nothing stops requiring agreement
+    with causal-learn on more than a single lucky/unlucky seed.
+    """
+    df = build(np.random.default_rng(seed))
     z_cols = [c for c in df.columns if c not in ("x", "y")]
     z = df[z_cols] if z_cols else None
 
