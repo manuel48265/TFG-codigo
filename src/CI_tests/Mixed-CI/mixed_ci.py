@@ -21,10 +21,6 @@ def _direction_log_pvalue(outcome, added, z) -> tuple[log_p, stat, dof]:
     log_p = log_survival_function(stat, dof, family_of(outcome_type))
     return log_p, stat, dof
 
-# Ec. 1 del paper (§4.1), en escala log — así lo hace ci.mm.R
-def _combine_mm_log(log_p1, log_p2) -> float:
-    return min(log(2) + min(log_p1, log_p2), max(log_p1, log_p2))
-
 # función pública
 def mixed_ci_test(x, y, z=None, alpha=0.05) -> CIResult:
     log_p1, stat1, dof1 = _direction_log_pvalue(outcome=y, added=x, z=z)   # H1: Y~Z+X vs Y~Z
@@ -35,6 +31,7 @@ def mixed_ci_test(x, y, z=None, alpha=0.05) -> CIResult:
     )
 """
 
+import math
 from enum import StrEnum
 
 import pandas as pd
@@ -59,6 +56,10 @@ class MixedCI:
         elif isinstance(series.dtype, pd.CategoricalDtype):
             return VariableType.ORDINAL if series.dtype.ordered else VariableType.NOMINAL
         return VariableType.CONTINUOUS
+
+    # Equation 1 (in log scale as ci.mm.R)
+    def _combine_mm_log(log_p1: float, log_p2: float) -> float:
+        return min(math.log(2) + min(log_p1, log_p2), max(log_p1, log_p2))
 
     def mixed_ci_test(
         self, data: pd.DataFrame, x: str, y: str, z: list[str] | None = None, alpha: float = 0.05
