@@ -60,5 +60,9 @@ ignore_missing_imports = true
 module = "statsmodels.*"
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = "sklearn.*"
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
