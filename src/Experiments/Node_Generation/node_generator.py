@@ -5,8 +5,8 @@ import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
 
-from src.Experiments.causal_models import Model
-from src.Experiments.factory import (
+from src.Experiments.Node_Generation.causal_models import Model
+from src.Experiments.Node_Generation.factory import (
     CategoricalFunction,
     GeneralNoiseFactory,
     HomoscedasticShapeFactory,

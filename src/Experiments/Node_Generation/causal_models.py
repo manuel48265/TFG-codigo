@@ -1,4 +1,4 @@
-from src.Experiments.factory import (
+from src.Experiments.Node_Generation.factory import (
     CategoricalFactory,
     CategoricalVariablesMeanFactory,
     CategoricalVariablesScaleFactory,
