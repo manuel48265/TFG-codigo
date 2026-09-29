@@ -170,6 +170,31 @@ def test_unconditional_z_none_does_not_crash_and_distinguishes_dependence() -> N
     assert not cmiknn_test(x_indep, y_indep, None).reject
 
 
+def test_gamma_null_fit_distinguishes_dependence_with_fewer_draws() -> None:
+    """🇬🇧 null_fit="gamma" fits a Gamma to the (small) null sample and
+    reads the p-value off its CDF instead of counting exceedances, so it
+    should still separate dependence from independence with far fewer
+    permutation draws than the default empirical count needs.
+
+    🇪🇸 null_fit="gamma" ajusta una Gamma a la (pequeña) muestra nula y lee
+    el p-valor de su CDF en vez de contar cuántas la superan, así que debe
+    seguir separando dependencia de independencia con muchas menos
+    permutaciones de las que necesita el conteo empírico por defecto.
+    """
+    rng = np.random.default_rng(0)
+    n = 500
+    z = rng.standard_normal((n, 3))
+
+    x_dep = rng.standard_normal(n)
+    y_dep = np.sin(2 * x_dep) + 0.1 * rng.standard_normal(n)
+
+    x_indep = rng.standard_normal(n)
+    y_indep = rng.standard_normal(n)
+
+    assert cmiknn_test(x_dep, y_dep, z, sig_samples=50, null_fit="gamma").reject
+    assert not cmiknn_test(x_indep, y_indep, z, sig_samples=50, null_fit="gamma").reject
+
+
 @pytest.mark.parametrize("scenario", SCENARIOS, ids=lambda s: s.name)
 def test_cmi_matches_tigramite_given_the_same_permutation(scenario: Scenario) -> None:
     """🇬🇧 Isolates the actual CMI computation (Eq. 5 + neighbor counting

@@ -1,6 +1,6 @@
 import numpy as np
 from numpy.typing import NDArray
-from scipy import spatial, special
+from scipy import spatial, special, stats
 
 from src.CI_tests.common import CIResult
 
@@ -14,6 +14,7 @@ class CMIknn:
         seed: int = 0,
         workers: int = -1,
         tie_break_ulps: float | None = None,
+        null_fit: str | None = None,
     ) -> None:
 
         self.random_state = np.random.default_rng(seed=seed)
@@ -22,6 +23,7 @@ class CMIknn:
         self.sig_samples = sig_samples
         self.workers = workers
         self.tie_break_ulps = tie_break_ulps
+        self.null_fit = null_fit
 
     ######################################################################################
     # Rank transform
@@ -188,6 +190,18 @@ class CMIknn:
             y_perm = y[perm]
             k_xz, k_yz, k_z = self._neighbor_counts(x, y_perm, z, knn)
             null_dist[b] = self._cmi_estimator(knn, k_z, k_xz, k_yz)
+
+        # null_fit="gamma" (tigramite's own null_fit option): fits a Gamma to
+        # null_dist and reads the p-value off its CDF instead of counting
+        # exceedances, so sig_samples can drop from ~500 to ~50 for the same
+        # tail accuracy -- counting needs many draws to resolve a small
+        # empirical p-value, a smooth fit doesn't.
+        if self.null_fit == "gamma":
+            try:
+                a, loc, scale = stats.gamma.fit(null_dist)
+                return float(1.0 - stats.gamma.cdf(value, a, loc=loc, scale=scale))
+            except Exception:
+                pass
 
         # Empirical Monte Carlo
         pval = float(np.sum(null_dist >= value) + 1) / (self.sig_samples + 1)

@@ -276,9 +276,11 @@ class KCI:
         self,
         data_x: NDArray[np.float64],
         data_y: NDArray[np.float64],
-        data_z: NDArray[np.float64],
+        data_z: NDArray[np.float64] | None = None,
     ) -> CIResult:
         """Run the KCI conditional-independence test."""
+        if data_z is None:
+            data_z = np.empty((data_x.shape[0], 0))
         Kx, Ky, Kzx, Kzy = self.kernel_matrix(data_x, data_y, data_z)
         test_stat, KxR, KyR = self.KCI_V_statistic(Kx, Ky, Kzx, Kzy)
         eigenvects_prod, n_components = self.get_eigenvects_prod(KxR, KyR)
@@ -296,7 +298,7 @@ class KCI:
 def kci_test(
     data_x: NDArray[np.float64],
     data_y: NDArray[np.float64],
-    data_z: NDArray[np.float64],
+    data_z: NDArray[np.float64] | None = None,
     **kwargs: object,
 ) -> CIResult:
     """Test conditional independence via the Kernel Conditional Independence test.
@@ -304,7 +306,8 @@ def kci_test(
     Args:
         data_x: X sample, shape (n, dx) — Muestra de X, forma (n, dx).
         data_y: Y sample, shape (n, dy) — Muestra de Y, forma (n, dy).
-        data_z: Z sample, shape (n, dz) — Muestra de Z, forma (n, dz).
+        data_z: Z sample, shape (n, dz), or None for an unconditional test —
+            Muestra de Z, forma (n, dz), o None para un test incondicional.
         **kwargs: Forwarded to `KCI.__init__` — Reenviados a `KCI.__init__`.
 
     Returns:

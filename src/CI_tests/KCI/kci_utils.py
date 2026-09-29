@@ -148,7 +148,9 @@ class GaussianKernel:
             width = 0.7
         else:
             width = 0.4
-        self.width = 1.0 / (width**2 * dim_z)
+        if dim_z != 0:
+            width = 1.0 / (width**2 * dim_z)
+        self.width = width
 
 
 def normalize_unit_variance(data: NDArray[np.float64]) -> NDArray[np.float64]:
