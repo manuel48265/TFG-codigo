@@ -326,3 +326,18 @@ def node_generator_with_no_parents(
     if target_variable == VariableType.ORDINAL:
         return pd.Series(pd.Categorical(X_j, categories=range(num_bins), ordered=True))
     return pd.Series(X_j)
+
+
+def generate_root(
+    rng: np.random.Generator,
+    n: int,
+    rules: Model,
+    target_variable: VariableType,
+) -> pd.Series:
+    if rng.random() < 0.5:
+        return node_generator_with_no_parents(rng, n, target_variable)
+
+    dummy_data = pd.DataFrame(
+        {"__dummy_1": rng.standard_normal(n), "__dummy_2": rng.standard_normal(n)}
+    )
+    return node_generator(rng, dummy_data, ["__dummy_1", "__dummy_2"], rules, target_variable)
