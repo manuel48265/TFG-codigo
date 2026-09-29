@@ -6,7 +6,7 @@ from numpy.typing import NDArray
 
 ShapeFunction = Callable[[NDArray[np.float64]], NDArray[np.float64]]
 NoiseSampler = Callable[[int], NDArray[np.float64]]
-CategoricalFunction = Callable[[int], np.float64]
+CategoricalFunction = Callable[[NDArray[np.int64]], NDArray[np.float64]]
 
 ## FUNTIONS ##
 
@@ -103,6 +103,15 @@ def laplace_noise(rng: np.random.Generator) -> NoiseSampler:
     return lambda n: rng.laplace(0.0, 1.0 / np.sqrt(2.0), n)
 
 
+def exponential_noise(rng: np.random.Generator) -> NoiseSampler:
+    return lambda n: rng.exponential(1.0, n) - 1.0
+
+
+def gumbel_noise(rng: np.random.Generator) -> NoiseSampler:
+    beta = np.sqrt(6.0) / np.pi
+    return lambda n: rng.gumbel(-beta * np.euler_gamma, beta, n)
+
+
 ## Factory ##
 
 
@@ -190,6 +199,10 @@ class NonGaussianNoiseFactory(NoiseFactory):
     _BUILDERS = (laplace_noise,)
 
 
+class GeneralNoiseFactory(NoiseFactory):
+    _BUILDERS = (gaussian_noise, laplace_noise, exponential_noise, gumbel_noise)
+
+
 # Nominal variables
 
 
@@ -201,7 +214,7 @@ def categorical_mean_function(rng: np.random.Generator, n_categories: int) -> Ca
 
 
 def categorical_shape_function(rng: np.random.Generator, n_categories: int) -> CategoricalFunction:
-    magnitude = rng.uniform(0.25, 4.0, size=n_categories)
+    magnitude = rng.uniform(0.5, 2.0, size=n_categories)
     table = magnitude
     return lambda t: table[t]
 

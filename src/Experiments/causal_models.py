@@ -1,5 +1,3 @@
-from enum import Enum, auto
-
 from src.Experiments.factory import (
     CategoricalFactory,
     CategoricalVariablesMeanFactory,
@@ -15,21 +13,6 @@ from src.Experiments.factory import (
     NonLinearShapeFactory,
     OuterTransformFactory,
 )
-
-
-class NodeKind(Enum):
-    CONTINUOUS = auto()
-    ORDINAL = auto()
-    BINARY = auto()
-    NOMINAL = auto()
-
-
-class ModelKind(Enum):
-    LINEAR_GAUSSIAN = auto()
-    LINEAR_NON_GAUSSIAN = auto()
-    ADDITIVE_NOISE_MODELS = auto()
-    POST_NON_LINEAR = auto()
-    LOCAL_SCALE_NOISE_MODELS = auto()
 
 
 class Model:
