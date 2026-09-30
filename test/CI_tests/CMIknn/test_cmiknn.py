@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 import pytest
 from tigramite.independence_tests.cmiknn import CMIknn as TigramiteCMIknn
 
@@ -28,6 +29,7 @@ def test_breaks_ties_into_a_valid_permutation() -> None:
 
     result = CMIknn()._rank_transform(x)
 
+    assert sorted(result.tolist()) == [0.0, 1.0, 2.0, 3.0]
     assert result[3] == 3.0
     assert result[2] == 2.0
 
@@ -106,15 +108,66 @@ def test_unconditional_z_none_does_not_crash_and_distinguishes_dependence() -> N
     x_indep = rng.standard_normal(n)
     y_indep = rng.standard_normal(n)
 
-    assert cmiknn_test(x_dep, y_dep, None).reject
-    assert not cmiknn_test(x_indep, y_indep, None).reject
+    df = pd.DataFrame({"x_dep": x_dep, "y_dep": y_dep, "x_indep": x_indep, "y_indep": y_indep})
+    assert cmiknn_test(df, "x_dep", "y_dep").reject
+    assert not cmiknn_test(df, "x_indep", "y_indep").reject
+
+
+def test_empty_z_list_is_the_marginal_test() -> None:
+    """z=[] must behave exactly like z=None (same seed, same result)."""
+    rng = np.random.default_rng(0)
+    x = rng.standard_normal(200)
+    df = pd.DataFrame({"x": x, "y": 0.9 * x + 0.3 * rng.standard_normal(200)})
+
+    assert cmiknn_test(df, "x", "y", [], sig_samples=30) == cmiknn_test(
+        df, "x", "y", sig_samples=30
+    )
+
+
+def test_integer_coded_conditioning_column_gives_same_result_as_float() -> None:
+    """A discrete Z stored as ints must be handled exactly as its float copy."""
+    rng = np.random.default_rng(0)
+    n = 300
+    z_int = rng.integers(0, 3, n)
+    x = z_int + 0.5 * rng.standard_normal(n)
+    y = np.tanh(z_int) + 0.5 * rng.standard_normal(n)
+    df_int = pd.DataFrame({"x": x, "y": y, "z": z_int})
+    df_float = df_int.astype({"z": np.float64})
+
+    assert cmiknn_test(df_int, "x", "y", ["z"], sig_samples=30) == cmiknn_test(
+        df_float, "x", "y", ["z"], sig_samples=30
+    )
+
+
+def test_non_numeric_conditioning_column_raises_value_error() -> None:
+    rng = np.random.default_rng(0)
+    df = pd.DataFrame(
+        {"x": rng.standard_normal(50), "y": rng.standard_normal(50), "z": list("ab") * 25}
+    )
+
+    with pytest.raises(ValueError):
+        cmiknn_test(df, "x", "y", ["z"])
+
+
+def test_empirical_null_fit_p_value_reaches_its_minimum_for_strong_dependence() -> None:
+    """With null_fit=None the p-value is (#{null >= stat} + 1) / (sig_samples + 1),
+    so a dependence no permutation can match must give exactly 1 / (sig_samples + 1).
+    """
+    rng = np.random.default_rng(0)
+    x = rng.standard_normal(300)
+    df = pd.DataFrame({"x": x, "y": x + 0.05 * rng.standard_normal(300)})
+
+    result = cmiknn_test(df, "x", "y", sig_samples=30, null_fit=None)
+
+    assert result.p_value == pytest.approx(1 / 31)
+    assert result.reject
 
 
 def test_gamma_null_fit_distinguishes_dependence_with_fewer_draws() -> None:
     """null_fit="gamma" fits a Gamma to the (small) null sample and
     reads the p-value off its CDF instead of counting exceedances, so it
     should still separate dependence from independence with far fewer
-    permutation draws than the default empirical count needs.
+    permutation draws than the empirical count needs.
     """
     rng = np.random.default_rng(0)
     n = 500
@@ -126,35 +179,33 @@ def test_gamma_null_fit_distinguishes_dependence_with_fewer_draws() -> None:
     x_indep = rng.standard_normal(n)
     y_indep = rng.standard_normal(n)
 
-    assert cmiknn_test(x_dep, y_dep, z, sig_samples=50, null_fit="gamma").reject
-    assert not cmiknn_test(x_indep, y_indep, z, sig_samples=50, null_fit="gamma").reject
+    df = pd.DataFrame(
+        {"x_dep": x_dep, "y_dep": y_dep, "x_indep": x_indep, "y_indep": y_indep}
+        | {f"z{j}": z[:, j] for j in range(3)}
+    )
+    z_cols = ["z0", "z1", "z2"]
+    assert cmiknn_test(df, "x_dep", "y_dep", z_cols, sig_samples=50, null_fit="gamma").reject
+    assert not cmiknn_test(
+        df, "x_indep", "y_indep", z_cols, sig_samples=50, null_fit="gamma"
+    ).reject
 
 
 @pytest.mark.parametrize("scenario", SCENARIOS, ids=lambda s: s.name)
 def test_cmi_matches_tigramite_given_the_same_permutation(scenario: Scenario) -> None:
-    """Isolates the actual CMI computation (Eq. 5 + neighbor counting
-    under a permuted Y) from the shuffle-test orchestration around it,
-    which is what makes end-to-end p_value matching against tigramite
-    infeasible (see the "cmiknn" entry in test/methods.py). Here both
-    sides are handed the *same* permuted y — generated once, outside
-    either implementation's own RNG — so nothing about which permutation
-    gets drawn can cause a mismatch; a mismatch here could only mean a
-    formula itself is wrong. Checks two separate sections against their
-    tigramite counterpart, each called directly (bypassing tigramite's own
-    shuffle loop, `get_shuffle_significance`, and its RNG entirely):
-    `_neighbor_counts` against `_get_nearest_neighbors` (the k_xz/k_yz/k_z
-    counts themselves, exact integers), then `_cmi_estimator` against the
-    rest of `get_dependence_measure` (Eq. 5 applied to those counts). A
-    failure pinpoints which of the two sections diverged. Uses
-    `scenario.clean_seed` (pre-verified free of near-ties, see
-    test/scenarios.py's `has_near_tie` and test/test_scenarios.py) instead
-    of the scenario's arbitrary default seed — near-tied data makes which
-    of two values sorts first a coin flip decided by tie-break noise, and
-    since we and tigramite draw that noise from independent RNGs, a
-    mismatch there would reflect the two RNGs disagreeing on that coin
-    flip, not a formula bug (verified over thousands of cases in
-    experiments/verification/verify_cmiknn.py: 0 mismatches once near-ties
-    are excluded).
+    """Compare the CMI computation against tigramite's under the same permuted Y.
+
+    Both implementations receive one permuted Y generated outside either
+    RNG, so a mismatch can only come from the computation itself. Two
+    sections are checked, bypassing tigramite's shuffle loop:
+
+    1. `_neighbor_counts` against `_get_nearest_neighbors`: the k_xz, k_yz
+       and k_z counts must be equal integers.
+    2. `_cmi_estimator` against `get_dependence_measure`: Eq. 5 applied to
+       those counts must agree.
+
+    The data uses `scenario.clean_seed`, a seed without near-tied values:
+    with near-ties, the order of two almost-equal values depends on the
+    tie-break noise, which each implementation draws from its own RNG.
     """
     x, y, z = scenario.generate(np.random.default_rng(scenario.clean_seed))
     x2, y2, z2 = x.reshape(-1, 1), y.reshape(-1, 1), z

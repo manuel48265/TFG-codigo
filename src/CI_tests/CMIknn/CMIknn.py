@@ -1,10 +1,19 @@
+# J. Runge, "Conditional independence testing based on a nearest-neighbor
+# estimator of conditional mutual information," AISTATS 2018 (PMLR 84),
+# arXiv:1709.01447. Statistic: Eq. 5. Null distribution: Algorithm 1.
+# Differences from the paper, shared with tigramite's implementation:
+# Y is permuted instead of X, ranks are ascending (smallest value = 0), and
+# the p-value is (#{null >= statistic} + 1) / (B + 1) instead of Eq. 6.
+# null_fit="gamma" is a tigramite option and is not in the paper.
+
 from typing import Literal
 
 import numpy as np
+import pandas as pd
 from numpy.typing import NDArray
 from scipy import spatial, special, stats
 
-from src.CI_tests.common import CIResult
+from src.CI_tests.common import CIResult, ci_test
 
 
 class CMIknn:
@@ -286,27 +295,32 @@ class CMIknn:
         return CIResult(statistic=value, p_value=p_value, reject=(p_value < alpha))
 
 
+@ci_test
 def cmiknn_test(
-    x: NDArray[np.float64],
-    y: NDArray[np.float64],
-    z: NDArray[np.float64] | None = None,
+    data: pd.DataFrame,
+    x: str,
+    y: str,
+    z: list[str] | None = None,
     alpha: float = 0.05,
     **kwargs: object,
 ) -> CIResult:
-    """Test conditional independence of X and Y given Z with the kNN CMI test.
+    """Test conditional independence of two columns given others with the kNN CMI test.
 
     Wrapper that builds a ``CMIknn`` from ``kwargs`` and runs its test.
 
     Parameters
     ----------
-    x : ndarray of shape (n,)
-        Sample of X.
+    data : DataFrame
+        Observations in rows, numeric variables in columns.
 
-    y : ndarray of shape (n,)
-        Sample of Y.
+    x : str
+        Name of the first tested column.
 
-    z : ndarray of shape (n, d_z) or None, optional (default: None)
-        Sample of the conditioning set. If None, the test is marginal.
+    y : str
+        Name of the second tested column.
+
+    z : list of str or None, optional (default: None)
+        Names of the conditioning columns. If None or empty, the test is marginal.
 
     alpha : float, optional (default: 0.05)
         Significance level; the test rejects if ``p_value < alpha``.
@@ -322,4 +336,7 @@ def cmiknn_test(
         ``statistic`` is the estimated CMI, ``p_value`` the permutation
         p-value and ``reject`` the decision at level ``alpha``.
     """
-    return CMIknn(**kwargs).CMIknn_test(x, y, z, alpha)  # type: ignore[arg-type]
+    z_values = data[z].to_numpy(dtype=np.float64) if z else None
+    return CMIknn(**kwargs).CMIknn_test(  # type: ignore[arg-type]
+        data[x].to_numpy(dtype=np.float64), data[y].to_numpy(dtype=np.float64), z_values, alpha
+    )
