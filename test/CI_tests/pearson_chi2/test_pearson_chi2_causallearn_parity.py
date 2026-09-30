@@ -1,4 +1,4 @@
-"""Parity tests: `pearson_chi2_test` (Python) vs causal-learn's `chisq`."""
+"""Parity tests: `PearsonChi2` (Python) vs causal-learn's `chisq`."""
 
 from collections.abc import Callable
 
@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.CI_tests.pearson_chi2.pearson_chi2 import pearson_chi2_test
+from src.CI_tests.pearson_chi2.pearson_chi2 import PearsonChi2
 from test.CI_tests.pearson_chi2.pearson_chi2_causallearn_bridge import (
     pearson_chi2_test_causallearn,
 )
@@ -43,7 +43,7 @@ N_SEEDS = 20  # pure Python on both sides, no R/rpy2 cost -- can afford more tha
 def test_python_matches_causallearn(
     name: str, build: Callable[[np.random.Generator], pd.DataFrame], seed: int
 ) -> None:
-    """Swept over `N_SEEDS` draws, not just one: pearson_chi2_test has no
+    """Swept over `N_SEEDS` draws, not just one: PearsonChi2 has no
     internal randomness of its own, so nothing stops requiring agreement
     with causal-learn on more than a single lucky/unlucky seed.
     """
@@ -51,7 +51,7 @@ def test_python_matches_causallearn(
     z_cols = [c for c in df.columns if c not in ("x", "y")]
     z = df[z_cols] if z_cols else None
 
-    py = pearson_chi2_test(df["x"], df["y"], z)
+    py = PearsonChi2().test(df["x"], df["y"], z)
     ref = pearson_chi2_test_causallearn(df["x"], df["y"], z)
 
     assert py.p_value == pytest.approx(ref.p_value)
