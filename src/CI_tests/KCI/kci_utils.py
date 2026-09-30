@@ -139,8 +139,7 @@ class GaussianKernel:
         """Set ``width`` from the sample size and the dimension of Z.
 
         The base value is 1.2 for ``n < 200``, 0.7 for ``n < 1200`` and 0.4
-        otherwise; if ``dim_z != 0`` the width becomes
-        ``1 / (base**2 * dim_z)``.
+        otherwise, and the width is ``1 / (base**2 * dim_z)``.
 
         Parameters
         ----------
@@ -148,7 +147,7 @@ class GaussianKernel:
             Sample size.
 
         dim_z : int
-            Number of conditioning columns.
+            Number of conditioning columns, at least 1.
         """
         if n < 200:
             width = 1.2
@@ -156,9 +155,30 @@ class GaussianKernel:
             width = 0.7
         else:
             width = 0.4
-        if dim_z != 0:
-            width = 1.0 / (width**2 * dim_z)
-        self.width = width
+        self.width = 1.0 / (width**2 * dim_z)
+
+    def set_width_empirical_marginal(self, n: int, dim: int) -> None:
+        """Set ``width`` for the marginal test from the sample size and the variable's dimension.
+
+        The base value is 0.8 for ``n < 200``, 0.5 for ``n < 1200`` and 0.3
+        otherwise (Zhang et al. 2011, Sec. 3.5), and the width is
+        ``dim / base**2``.
+
+        Parameters
+        ----------
+        n : int
+            Sample size.
+
+        dim : int
+            Number of columns of the variable the kernel is built on.
+        """
+        if n < 200:
+            width = 0.8
+        elif n < 1200:
+            width = 0.5
+        else:
+            width = 0.3
+        self.width = dim / width**2
 
 
 def normalize_unit_variance(data: NDArray[np.float64]) -> NDArray[np.float64]:

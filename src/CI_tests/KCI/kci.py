@@ -7,13 +7,17 @@ from numpy.linalg import eigh, eigvalsh
 from numpy.typing import NDArray
 from scipy import stats
 
-from src.CI_tests.common import CIResult, ci_test
+from src.CI_tests.common import CIResult, ci_test, frame_to_arrays
 from src.CI_tests.KCI.kci_utils import (
     GaussianKernel,
     center_kernel_matrix,
     center_kernel_matrix_regression,
     normalize_unit_variance,
 )
+
+# Relative eigenvalue cutoffs of the original implementation (KCI-test.zip).
+DEFAULT_CONDITIONAL_THRESH = 1e-5
+DEFAULT_MARGINAL_THRESH = 1e-6
 
 
 def scaled_eigenvecs(K: NDArray[np.float64], thresh: float) -> NDArray[np.float64]:
@@ -46,11 +50,14 @@ def scaled_eigenvecs(K: NDArray[np.float64], thresh: float) -> NDArray[np.float6
 class KCI:
     """Kernel-based conditional independence test (Zhang et al. 2011).
 
-    Only the Gaussian kernel is supported. The kernel of X is built over X
-    concatenated with half of Z, and the kernels of X and Y are residualized
-    against the kernel of Z, following the original implementation
-    (CInd_test_new_withGP.m). The p-value comes either from a Gamma
-    approximation of the null distribution or from Monte Carlo draws of it.
+    Only the Gaussian kernel is supported. With a conditioning set, the kernel
+    of X is built over X concatenated with half of Z, and the kernels of X and
+    Y are residualized against the kernel of Z, following the original
+    implementation (CInd_test_new_withGP.m). With an empty conditioning set the
+    test is the unconditional one of Sec. 3.2 (UInd_KCItest.m): the statistic
+    is the HSIC of X and Y, with no residualization. The p-value comes either
+    from a Gamma approximation of the null distribution or from Monte Carlo
+    draws of it.
 
     Parameters
     ----------
@@ -62,8 +69,9 @@ class KCI:
         If True, approximate the null distribution by a Gamma distribution
         (Prop. 6.ii); if False, sample it (Eq. 14).
 
-    thresh : float, optional (default: 1e-5)
-        Eigenvalues below ``thresh`` times the largest one are discarded.
+    thresh : float or None, optional (default: None)
+        Eigenvalues below ``thresh`` times the largest one are discarded. If
+        None, 1e-5 is used with a conditioning set and 1e-6 without one.
 
     epsilon_x : float, optional (default: 1e-3)
         Regularization used to residualize the kernel of X against Z.
@@ -72,21 +80,22 @@ class KCI:
         Regularization used to residualize the kernel of Y against Z.
 
     kwidthx : float or None, optional (default: None)
-        Width of the kernel of (X, Z). If None, it is set from the sample size
-        and the dimension of Z.
+        Width of the kernel of (X, Z), or of X if there is no Z. If None, it is
+        set from the sample size and the dimension of Z, or of X if there is no Z.
 
     kwidthy : float or None, optional (default: None)
         Width of the kernel of Y. If None, it is set as for ``kwidthx``.
 
     kwidthz : float or None, optional (default: None)
         Width of the kernel of Z. If None, it is set as for ``kwidthx``.
+        Unused without a conditioning set.
     """
 
     def __init__(
         self,
         nullss: int = 5000,
         approx: bool = True,
-        thresh: float = 1e-5,
+        thresh: float | None = None,
         epsilon_x: float = 1e-3,
         epsilon_y: float = 1e-3,
         kwidthx: float | None = None,
@@ -122,7 +131,7 @@ class KCI:
             Sample of Y.
 
         data_z : ndarray of shape (n, d_z)
-            Sample of Z; ``d_z`` may be 0.
+            Sample of Z, with ``d_z >= 1``.
 
         Returns
         -------
@@ -188,8 +197,9 @@ class KCI:
             Number of tensor components, the product of the numbers of
             retained eigenvectors of ``Kx`` and ``Ky``.
         """
-        scaled_eigenvecs_x = scaled_eigenvecs(Kx, self.thresh)
-        scaled_eigenvecs_y = scaled_eigenvecs(Ky, self.thresh)
+        thresh = DEFAULT_CONDITIONAL_THRESH if self.thresh is None else self.thresh
+        scaled_eigenvecs_x = scaled_eigenvecs(Kx, thresh)
+        scaled_eigenvecs_y = scaled_eigenvecs(Ky, thresh)
 
         n: int = Kx.shape[0]
         n_components: int = scaled_eigenvecs_x.shape[1] * scaled_eigenvecs_y.shape[1]
@@ -260,7 +270,8 @@ class KCI:
         eigen = eigvalsh(eigenvecs_prod)
         eigen = -np.sort(-eigen)
         eigen = eigen[0 : np.min((sample_size, n_components))]
-        eigen = eigen[eigen > np.max(eigen) * self.thresh]
+        thresh = DEFAULT_CONDITIONAL_THRESH if self.thresh is None else self.thresh
+        eigen = eigen[eigen > np.max(eigen) * thresh]
 
         chi_distribution = np.random.chisquare(1, (eigen.shape[0], self.nullss))
         null_distribution = eigen.T.dot(chi_distribution)
@@ -314,6 +325,57 @@ class KCI:
         Vstat = np.sum(KxR * KyR)
         return Vstat, KxR, KyR
 
+    def _marginal_test(
+        self, data_x: NDArray[np.float64], data_y: NDArray[np.float64], alpha: float
+    ) -> CIResult:
+        """Run the unconditional test of Zhang et al. (2011, Sec. 3.2).
+
+        The statistic is ``sum(Kx * Ky)`` over the centered Gaussian kernel
+        matrices of X and Y. The Gamma approximation uses the mean
+        ``tr(Kx) tr(Ky) / n`` and variance ``2 tr(Kx^2) tr(Ky^2) / n^2``
+        (Sec. 3.4); the Monte Carlo null draws weight chi-square(1) variables
+        with the products of the eigenvalues of ``Kx`` and ``Ky``, divided by
+        ``n`` (Eq. 9), using at most ``n / 2`` eigenvalues of each if
+        ``n > 1000``. Uses the global NumPy random state.
+        """
+        n = data_x.shape[0]
+        thresh = DEFAULT_MARGINAL_THRESH if self.thresh is None else self.thresh
+
+        centered = []
+        for data, manual_width in (
+            (normalize_unit_variance(data_x), self.kwidthx),
+            (normalize_unit_variance(data_y), self.kwidthy),
+        ):
+            kernel = GaussianKernel()
+            if manual_width is not None:
+                kernel.width = manual_width
+            else:
+                kernel.set_width_empirical_marginal(n, data.shape[1])
+            centered.append(center_kernel_matrix(kernel.kernel(data)))
+        Kx, Ky = centered
+        test_stat = float(np.sum(Kx * Ky))
+
+        if self.approx:
+            approx_mean = np.trace(Kx) * np.trace(Ky) / n
+            approx_var = 2 * np.sum(Kx**2) * np.sum(Ky**2) / n**2
+            p_value = float(
+                1
+                - stats.gamma.cdf(
+                    test_stat, approx_mean**2 / approx_var, 0, approx_var / approx_mean
+                )
+            )
+        else:
+            num_eig = n // 2 if n > 1000 else n
+            eigen_x = -np.sort(-eigvalsh(Kx))[:num_eig]
+            eigen_y = -np.sort(-eigvalsh(Ky))[:num_eig]
+            weights = np.outer(eigen_x, eigen_y).ravel()
+            weights = weights[weights > weights.max() * thresh]
+            chi_distribution = np.random.chisquare(1, (weights.shape[0], self.nullss))
+            null_distribution = weights.dot(chi_distribution) / n
+            p_value = float(np.sum(null_distribution > test_stat) / self.nullss)
+
+        return CIResult(statistic=test_stat, p_value=p_value, reject=(p_value < alpha))
+
     def test(
         self,
         x: NDArray[np.float64],
@@ -332,7 +394,8 @@ class KCI:
             Sample of Y.
 
         z : ndarray of shape (n,) or (n, d_z), or None, optional (default: None)
-            Sample of the conditioning set. If None, the test is marginal.
+            Sample of the conditioning set. If None or without columns, the test
+            is marginal.
 
         alpha : float, optional (default: 0.05)
             Significance level; the test rejects if ``p_value < alpha``.
@@ -350,10 +413,13 @@ class KCI:
         n = x.shape[0]
         data_x = x.reshape(n, -1)
         data_y = y.reshape(n, -1)
-        data_z = np.empty((n, 0)) if z is None else z.reshape(n, -1)
 
         if not np.ptp(data_x, axis=0).any() or not np.ptp(data_y, axis=0).any():
             return CIResult(statistic=0.0, p_value=1.0, reject=False)
+
+        if z is None or z.size == 0:
+            return self._marginal_test(data_x, data_y, alpha)
+        data_z = z.reshape(n, -1)
 
         Kx, Ky, Kzx, Kzy = self.kernel_matrix(data_x, data_y, data_z)
         test_stat, KxR, KyR = self.KCI_V_statistic(Kx, Ky, Kzx, Kzy)
@@ -405,7 +471,5 @@ def kci_test(
         ``statistic`` is the V-statistic, ``p_value`` the one from the Gamma
         approximation and ``reject`` the decision at level ``alpha``.
     """
-    z_values = data[z].to_numpy(dtype=np.float64) if z else None
-    return KCI().test(
-        data[x].to_numpy(dtype=np.float64), data[y].to_numpy(dtype=np.float64), z_values, alpha
-    )
+    x_values, y_values, z_values = frame_to_arrays(data, x, y, z)
+    return KCI().test(x_values, y_values, z_values, alpha)
