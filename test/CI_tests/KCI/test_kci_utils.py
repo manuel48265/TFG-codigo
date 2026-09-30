@@ -9,11 +9,8 @@ from src.CI_tests.KCI.kci_utils import (
 
 
 def test_center_kernel_matrix_matches_literal_HKH() -> None:
-    """🇬🇧 Checks the O(n^2) algebraic shortcut against the literal, slow
+    """Checks the O(n^2) algebraic shortcut against the literal, slow
     H @ K @ H definition it's derived from.
-
-    🇪🇸 Comprueba el atajo algebraico O(n^2) contra la definición literal y
-    lenta H @ K @ H de la que se deriva.
     """
     rng = np.random.default_rng(0)
     n = 30
@@ -30,12 +27,8 @@ def test_center_kernel_matrix_matches_literal_HKH() -> None:
 
 
 def test_center_kernel_matrix_regression_matches_naive_pinv() -> None:
-    """🇬🇧 For a well-conditioned Kz, the Cholesky path should match the
+    """For a well-conditioned Kz, the Cholesky path should match the
     naive pinv-based formula from Zhang et al. (2011, Eq. 10-12) exactly.
-
-    🇪🇸 Para una Kz bien condicionada, la vía Cholesky debe coincidir
-    exactamente con la fórmula directa basada en pinv de Zhang et al.
-    (2011, Ec. 10-12).
     """
     rng = np.random.default_rng(1)
     n = 20
@@ -55,14 +48,9 @@ def test_center_kernel_matrix_regression_matches_naive_pinv() -> None:
 
 
 def test_numerical_floor_bounds_condition_number() -> None:
-    """🇬🇧 With a near-singular Kz and a tiny statistical epsilon, the
+    """With a near-singular Kz and a tiny statistical epsilon, the
     numerical floor n/(kappa_max-1) should take over and keep
     cond(Kz + eps*I) at or below kappa_max (Marchildon & Zingg 2023, Eq. 26).
-
-    🇪🇸 Con una Kz casi singular y un epsilon estadístico diminuto, la cota
-    numérica n/(kappa_max-1) debe tomar el control y mantener
-    cond(Kz + eps*I) por debajo o igual a kappa_max (Marchildon & Zingg
-    2023, Ec. 26).
     """
     n = 15
     rank_deficient = np.zeros((n, n))
@@ -80,13 +68,9 @@ def test_numerical_floor_bounds_condition_number() -> None:
 def test_falls_back_to_pinv_when_cholesky_solve_is_unreliable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """🇬🇧 Forces the Cholesky residual check to fail and checks the
+    """Forces the Cholesky residual check to fail and checks the
     function warns (not silently, per Foster et al. 2009) and still returns
     the mathematically correct result via the pinv fallback.
-
-    🇪🇸 Fuerza el fallo del chequeo de residuo de Cholesky y comprueba que la
-    función avisa (no en silencio, según Foster et al. 2009) y aun así
-    devuelve el resultado matemáticamente correcto vía la pseudo-inversa.
     """
     rng = np.random.default_rng(2)
     n = 10

@@ -2,11 +2,12 @@
 # "A kernel-based conditional independence test and application in causal discovery," In UAI 2011.
 
 import numpy as np
+import pandas as pd
 from numpy.linalg import eigh, eigvalsh
 from numpy.typing import NDArray
 from scipy import stats
 
-from src.CI_tests.common import CIResult
+from src.CI_tests.common import CIResult, ci_test
 from src.CI_tests.KCI.kci_utils import (
     GaussianKernel,
     center_kernel_matrix,
@@ -16,26 +17,24 @@ from src.CI_tests.KCI.kci_utils import (
 
 
 def scaled_eigenvecs(K: NDArray[np.float64], thresh: float) -> NDArray[np.float64]:
-    """Truncated, eigenvalue-scaled eigenvectors of a centered kernel matrix.
+    """Return the truncated, eigenvalue-scaled eigenvectors of a kernel matrix.
 
-    🇬🇧 V*sqrt(Λ) from the eigendecomposition of K, keeping only eigenvectors
-    whose eigenvalue exceeds `thresh` relative to the largest one (Zhang et
-    al. 2011, Sec. 3.3). Symmetrizes K first, since `eigh` only reads one
-    triangle.
+    Computes ``V @ diag(sqrt(w))`` from the eigendecomposition of the
+    symmetrized ``K``, keeping only the eigenvectors whose eigenvalue exceeds
+    ``thresh`` times the largest one (Zhang et al. 2011, Sec. 3.3).
 
-    🇪🇸 V*sqrt(Λ) a partir de la descomposición espectral de K, quedándose
-    solo con los autovectores cuyo autovalor supera `thresh` en relación al
-    mayor (Zhang et al. 2011, Sec. 3.3). Simetriza K antes, ya que `eigh`
-    solo lee un triángulo.
+    Parameters
+    ----------
+    K : ndarray of shape (n, n)
+        Centered kernel matrix.
 
-    Args:
-        K: Centered kernel matrix, shape (n, n) — Matriz de kernel centrada,
-            forma (n, n).
-        thresh: Relative eigenvalue cutoff — Umbral relativo de autovalores.
+    thresh : float
+        Relative eigenvalue cutoff.
 
-    Returns:
-        Truncated, scaled eigenvectors, shape (n, k) — Autovectores
-        truncados y escalados, forma (n, k).
+    Returns
+    -------
+    scaled_eigenvecs : ndarray of shape (n, k)
+        Retained eigenvectors, each scaled by the square root of its eigenvalue.
     """
     w, v = eigh(0.5 * (K + K.T))
     idx = np.argsort(-w)
@@ -45,14 +44,42 @@ def scaled_eigenvecs(K: NDArray[np.float64], thresh: float) -> NDArray[np.float6
 
 
 class KCI:
-    """Kernel-based Conditional Independence test (Zhang et al. 2011).
+    """Kernel-based conditional independence test (Zhang et al. 2011).
 
-    🇬🇧 Only the Gaussian kernel is supported (the paper's own default,
-    Sec. 2). Use the module-level `kci_test` function to run the test.
+    Only the Gaussian kernel is supported. The kernel of X is built over X
+    concatenated with half of Z, and the kernels of X and Y are residualized
+    against the kernel of Z, following the original implementation
+    (CInd_test_new_withGP.m). The p-value comes either from a Gamma
+    approximation of the null distribution or from Monte Carlo draws of it.
 
-    🇪🇸 Solo se soporta el kernel gaussiano (el que usa el paper por
-    defecto, Sec. 2). Usa la función `kci_test` del módulo para correr el
-    test.
+    Parameters
+    ----------
+    nullss : int, optional (default: 5000)
+        Number of Monte Carlo draws of the null distribution. Used only if
+        ``approx`` is False.
+
+    approx : bool, optional (default: True)
+        If True, approximate the null distribution by a Gamma distribution
+        (Prop. 6.ii); if False, sample it (Eq. 14).
+
+    thresh : float, optional (default: 1e-5)
+        Eigenvalues below ``thresh`` times the largest one are discarded.
+
+    epsilon_x : float, optional (default: 1e-3)
+        Regularization used to residualize the kernel of X against Z.
+
+    epsilon_y : float, optional (default: 1e-3)
+        Regularization used to residualize the kernel of Y against Z.
+
+    kwidthx : float or None, optional (default: None)
+        Width of the kernel of (X, Z). If None, it is set from the sample size
+        and the dimension of Z.
+
+    kwidthy : float or None, optional (default: None)
+        Width of the kernel of Y. If None, it is set as for ``kwidthx``.
+
+    kwidthz : float or None, optional (default: None)
+        Width of the kernel of Z. If None, it is set as for ``kwidthx``.
     """
 
     def __init__(
@@ -60,7 +87,6 @@ class KCI:
         nullss: int = 5000,
         approx: bool = True,
         thresh: float = 1e-5,
-        alpha: float = 0.05,
         epsilon_x: float = 1e-3,
         epsilon_y: float = 1e-3,
         kwidthx: float | None = None,
@@ -70,7 +96,6 @@ class KCI:
         self.nullss = nullss
         self.approx = approx
         self.thresh = thresh
-        self.alpha = alpha
         self.epsilon_x = epsilon_x
         self.epsilon_y = epsilon_y
         self.kwidthx = kwidthx
@@ -83,32 +108,36 @@ class KCI:
         data_y: NDArray[np.float64],
         data_z: NDArray[np.float64],
     ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
-        """Build and center the Gaussian kernel matrices for (X,Z), Y and Z.
+        """Build the centered Gaussian kernel matrices of (X, Z), Y and Z.
 
-        🇬🇧 The X kernel is built over (X, Z/2) concatenated, not X alone
-        (Zhang et al. 2011, Sec. 3.3: Ẍ ≜ (X,Z); the Z/2 halving and the
-        rest of this construction follow CInd_test_new_withGP.m, the
-        original implementation, rather than the published text). All three
-        kernels share one width, from `self.kwidthx/y/z` if given, otherwise
-        from the empirical heuristic on (n, dim(Z)).
+        Each sample is first scaled to unit variance. The kernel of X is
+        computed over ``[X, Z / 2]`` (Zhang et al. 2011, Sec. 3.3).
 
-        🇪🇸 El kernel de X se construye sobre (X, Z/2) concatenados, no sobre
-        X sola (Zhang et al. 2011, Sec. 3.3: Ẍ ≜ (X,Z); el que Z se divida
-        entre 2 y el resto de esta construcción siguen
-        CInd_test_new_withGP.m, la implementación original, no el texto
-        publicado). Los tres kernels comparten un único ancho, tomado de
-        `self.kwidthx/y/z` si se dan, si no de la heurística empírica sobre
-        (n, dim(Z)).
+        Parameters
+        ----------
+        data_x : ndarray of shape (n, d_x)
+            Sample of X.
 
-        Args:
-            data_x: X sample, shape (n, dx) — Muestra de X, forma (n, dx).
-            data_y: Y sample, shape (n, dy) — Muestra de Y, forma (n, dy).
-            data_z: Z sample, shape (n, dz) — Muestra de Z, forma (n, dz).
+        data_y : ndarray of shape (n, d_y)
+            Sample of Y.
 
-        Returns:
-            (Kx, Ky, Kzx, Kzy), all centered; Kzx and Kzy are the same
-            matrix — (Kx, Ky, Kzx, Kzy), todas centradas; Kzx y Kzy son la
-            misma matriz.
+        data_z : ndarray of shape (n, d_z)
+            Sample of Z; ``d_z`` may be 0.
+
+        Returns
+        -------
+        Kx : ndarray of shape (n, n)
+            Kernel matrix of (X, Z).
+
+        Ky : ndarray of shape (n, n)
+            Kernel matrix of Y.
+
+        Kzx : ndarray of shape (n, n)
+            Kernel matrix of Z, used to residualize ``Kx``.
+
+        Kzy : ndarray of shape (n, n)
+            Kernel matrix of Z, used to residualize ``Ky``. It is the same
+            object as ``Kzx``.
         """
         data_x = normalize_unit_variance(data_x)
         data_y = normalize_unit_variance(data_y)
@@ -136,25 +165,28 @@ class KCI:
     def get_eigenvects_prod(
         self, Kx: NDArray[np.float64], Ky: NDArray[np.float64]
     ) -> tuple[NDArray[np.float64], int]:
-        """Tensor-product eigenvector features of two residualized kernels.
+        """Return the matrix whose eigenvalues weight the null distribution.
 
-        🇬🇧 w̆w̆ᵀ (or its dual w̆ᵀw̆, whichever is smaller) from the scaled
-        eigenvectors of Kx and Ky; its eigenvalues are the null
-        distribution's mixing weights (Zhang et al. 2011, Prop. 5).
+        Built from the tensor product of the scaled eigenvectors of ``Kx`` and
+        ``Ky``: ``w w^T`` or its dual ``w^T w``, whichever is smaller (Zhang et
+        al. 2011, Prop. 5).
 
-        🇪🇸 w̆w̆ᵀ (o su dual w̆ᵀw̆, el que sea más pequeño) a partir de los
-        autovectores escalados de Kx y Ky; sus autovalores son los pesos de
-        la mezcla de la distribución nula (Zhang et al. 2011, Prop. 5).
+        Parameters
+        ----------
+        Kx : ndarray of shape (n, n)
+            Residualized kernel matrix of (X, Z).
 
-        Args:
-            Kx: Residualized kernel matrix, shape (n, n) — Matriz de kernel
-                residualizada, forma (n, n).
-            Ky: Residualized kernel matrix, shape (n, n) — Matriz de kernel
-                residualizada, forma (n, n).
+        Ky : ndarray of shape (n, n)
+            Residualized kernel matrix of Y.
 
-        Returns:
-            (eigenvects_prod, n_components) — Matriz y número de
-            componentes tensoriales combinados.
+        Returns
+        -------
+        eigenvects_prod : ndarray of shape (m, m)
+            ``m`` is ``n`` or the number of tensor components, whichever is smaller.
+
+        n_components : int
+            Number of tensor components, the product of the numbers of
+            retained eigenvectors of ``Kx`` and ``Ky``.
         """
         scaled_eigenvecs_x = scaled_eigenvecs(Kx, self.thresh)
         scaled_eigenvecs_y = scaled_eigenvecs(Ky, self.thresh)
@@ -175,20 +207,22 @@ class KCI:
         return eigenvects_prod, n_components
 
     def get_kappa(self, eigenvecs_product: NDArray[np.float64]) -> tuple[np.float64, np.float64]:
-        """Gamma(k, theta) approximating the null distribution by moment matching.
+        """Return the Gamma parameters that match the mean and variance of the null distribution.
 
-        🇬🇧 Zhang et al. (2011, Prop. 6.ii). `k`/`theta` are named after the
-        shape/scale parameters `scipy.stats.gamma.cdf` expects.
+        Moment matching of Zhang et al. (2011, Prop. 6.ii).
 
-        🇪🇸 Zhang et al. (2011, Prop. 6.ii). `k`/`theta` se llaman así por
-        los parámetros de forma/escala que espera `scipy.stats.gamma.cdf`.
+        Parameters
+        ----------
+        eigenvecs_product : ndarray of shape (m, m)
+            Matrix returned by ``get_eigenvects_prod``.
 
-        Args:
-            eigenvecs_product: Output of `get_eigenvects_prod` — Salida de
-                `get_eigenvects_prod`.
+        Returns
+        -------
+        k : float
+            Shape parameter of the Gamma distribution.
 
-        Returns:
-            (k, theta) — forma y escala de la distribución Gamma.
+        theta : float
+            Scale parameter of the Gamma distribution.
         """
         approx_mean = np.trace(eigenvecs_product)
         approx_var = 2 * np.trace(eigenvecs_product.dot(eigenvecs_product))
@@ -199,28 +233,29 @@ class KCI:
     def null_sample(
         self, eigenvecs_prod: NDArray[np.float64], n_components: int, sample_size: int
     ) -> NDArray[np.float64]:
-        """Monte Carlo draws from the null distribution (Zhang et al. 2011, Eq. 14).
+        """Draw samples from the null distribution (Zhang et al. 2011, Eq. 14).
 
-        🇬🇧 Weights i.i.d. chi-square(1) draws with the eigenvalues of
-        `eigenvecs_prod`, truncated to at most `sample_size` components
-        (its rank can't exceed the sample size) and to those above
-        `self.thresh` relative to the largest.
+        Each draw is a weighted sum of independent chi-square(1) variables,
+        weighted by the eigenvalues of ``eigenvecs_prod``. At most
+        ``min(sample_size, n_components)`` eigenvalues are kept, and only
+        those above ``thresh`` times the largest one. Uses the global NumPy
+        random state.
 
-        🇪🇸 Pondera muestras chi-cuadrado(1) i.i.d. con los autovalores de
-        `eigenvecs_prod`, truncados a como mucho `sample_size` componentes
-        (su rango no puede superar el tamaño muestral) y a los que superan
-        `self.thresh` en relación al mayor.
+        Parameters
+        ----------
+        eigenvecs_prod : ndarray of shape (m, m)
+            Matrix returned by ``get_eigenvects_prod``.
 
-        Args:
-            eigenvecs_prod: Output of `get_eigenvects_prod` — Salida de
-                `get_eigenvects_prod`.
-            n_components: Its second output — Su segunda salida.
-            sample_size: Number of observations n — Número de observaciones
-                n.
+        n_components : int
+            Number of tensor components returned by ``get_eigenvects_prod``.
 
-        Returns:
-            `self.nullss` draws from the null distribution — `self.nullss`
-            muestras de la distribución nula.
+        sample_size : int
+            Number of observations ``n``.
+
+        Returns
+        -------
+        null_distribution : ndarray of shape (nullss,)
+            Draws from the null distribution.
         """
         eigen = eigvalsh(eigenvecs_prod)
         eigen = -np.sort(-eigen)
@@ -239,29 +274,36 @@ class KCI:
         Kzx: NDArray[np.float64],
         Kzy: NDArray[np.float64],
     ) -> tuple[np.float64, NDArray[np.float64], NDArray[np.float64]]:
-        """Residualize Kx/Ky against Z and compute the V-statistic (Zhang et al. 2011, Eq. 13).
+        """Residualize ``Kx`` and ``Ky`` against Z and return the V-statistic.
 
-        🇬🇧 Reuses R_z for Ky instead of recomputing it when Kzx and Kzy are
-        the same matrix and `self.epsilon_x == self.epsilon_y`, since R_z
-        depends only on Kz and epsilon.
+        The statistic is ``sum(KxR * KyR)`` (Zhang et al. 2011, Eq. 13).
+        If ``Kzx`` and ``Kzy`` are the same matrix and ``epsilon_x ==
+        epsilon_y``, the residualizing matrix of ``Kx`` is reused for ``Ky``.
 
-        🇪🇸 Reutiliza R_z para Ky en vez de recalcularlo cuando Kzx y Kzy son
-        la misma matriz y `self.epsilon_x == self.epsilon_y`, ya que R_z
-        depende solo de Kz y epsilon.
+        Parameters
+        ----------
+        Kx : ndarray of shape (n, n)
+            Centered kernel matrix of (X, Z).
 
-        Args:
-            Kx: Centered kernel matrix of (X,Z), shape (n, n) — Matriz de
-                kernel centrada de (X,Z), forma (n, n).
-            Ky: Centered kernel matrix of Y, shape (n, n) — Matriz de kernel
-                centrada de Y, forma (n, n).
-            Kzx: Centered kernel matrix of Z used to residualize Kx —
-                Matriz de kernel centrada de Z usada para residualizar Kx.
-            Kzy: Centered kernel matrix of Z used to residualize Ky —
-                Matriz de kernel centrada de Z usada para residualizar Ky.
+        Ky : ndarray of shape (n, n)
+            Centered kernel matrix of Y.
 
-        Returns:
-            (V_stat, KxR, KyR) — el estadístico del test y ambos kernels
-            residualizados.
+        Kzx : ndarray of shape (n, n)
+            Centered kernel matrix of Z used to residualize ``Kx``.
+
+        Kzy : ndarray of shape (n, n)
+            Centered kernel matrix of Z used to residualize ``Ky``.
+
+        Returns
+        -------
+        v_statistic : float
+            Test statistic.
+
+        KxR : ndarray of shape (n, n)
+            Residualized kernel matrix of (X, Z).
+
+        KyR : ndarray of shape (n, n)
+            Residualized kernel matrix of Y.
         """
         KxR, Rzx = center_kernel_matrix_regression(Kx, Kzx, self.epsilon_x)
         if self.epsilon_x != self.epsilon_y:
@@ -272,15 +314,41 @@ class KCI:
         Vstat = np.sum(KxR * KyR)
         return Vstat, KxR, KyR
 
-    def compute_pvalue(
+    def test(
         self,
-        data_x: NDArray[np.float64],
-        data_y: NDArray[np.float64],
-        data_z: NDArray[np.float64] | None = None,
+        x: NDArray[np.float64],
+        y: NDArray[np.float64],
+        z: NDArray[np.float64] | None = None,
+        alpha: float = 0.05,
     ) -> CIResult:
-        """Run the KCI conditional-independence test."""
-        if data_z is None:
-            data_z = np.empty((data_x.shape[0], 0))
+        """Test whether X and Y are conditionally independent given Z.
+
+        Parameters
+        ----------
+        x : ndarray of shape (n,) or (n, d_x)
+            Sample of X.
+
+        y : ndarray of shape (n,) or (n, d_y)
+            Sample of Y.
+
+        z : ndarray of shape (n,) or (n, d_z), or None, optional (default: None)
+            Sample of the conditioning set. If None, the test is marginal.
+
+        alpha : float, optional (default: 0.05)
+            Significance level; the test rejects if ``p_value < alpha``.
+
+        Returns
+        -------
+        result : CIResult
+            ``statistic`` is the V-statistic. ``p_value`` comes from the Gamma
+            approximation if ``approx`` is True, otherwise it is the fraction
+            of the ``nullss`` Monte Carlo draws above the statistic.
+        """
+        n = x.shape[0]
+        data_x = x.reshape(n, -1)
+        data_y = y.reshape(n, -1)
+        data_z = np.empty((n, 0)) if z is None else z.reshape(n, -1)
+
         Kx, Ky, Kzx, Kzy = self.kernel_matrix(data_x, data_y, data_z)
         test_stat, KxR, KyR = self.KCI_V_statistic(Kx, Ky, Kzx, Kzy)
         eigenvects_prod, n_components = self.get_eigenvects_prod(KxR, KyR)
@@ -289,29 +357,49 @@ class KCI:
             approx_k, approx_theta = self.get_kappa(eigenvects_prod)
             p_value = float(1 - stats.gamma.cdf(test_stat, approx_k, 0, approx_theta))
         else:
-            null_distribution = self.null_sample(eigenvects_prod, n_components, Kx.shape[0])
+            null_distribution = self.null_sample(eigenvects_prod, n_components, n)
             p_value = float(np.sum(null_distribution > test_stat) / self.nullss)
 
-        return CIResult(statistic=float(test_stat), p_value=p_value, reject=(p_value < self.alpha))
+        return CIResult(statistic=float(test_stat), p_value=p_value, reject=(p_value < alpha))
 
 
+@ci_test
 def kci_test(
-    data_x: NDArray[np.float64],
-    data_y: NDArray[np.float64],
-    data_z: NDArray[np.float64] | None = None,
-    **kwargs: object,
+    data: pd.DataFrame,
+    x: str,
+    y: str,
+    z: list[str] | None = None,
+    alpha: float = 0.05,
 ) -> CIResult:
-    """Test conditional independence via the Kernel Conditional Independence test.
+    """Test conditional independence of two columns given others with the KCI test.
 
-    Args:
-        data_x: X sample, shape (n, dx) — Muestra de X, forma (n, dx).
-        data_y: Y sample, shape (n, dy) — Muestra de Y, forma (n, dy).
-        data_z: Z sample, shape (n, dz), or None for an unconditional test —
-            Muestra de Z, forma (n, dz), o None para un test incondicional.
-        **kwargs: Forwarded to `KCI.__init__` — Reenviados a `KCI.__init__`.
+    Wrapper that selects the columns and runs ``KCI().test`` with its default
+    parameters.
 
-    Returns:
-        CIResult with the test statistic, p-value and reject decision —
-        CIResult con el estadístico, el p-valor y la decisión de rechazo.
+    Parameters
+    ----------
+    data : DataFrame
+        Observations in rows, numeric variables in columns.
+
+    x : str
+        Name of the first tested column.
+
+    y : str
+        Name of the second tested column.
+
+    z : list of str or None, optional (default: None)
+        Names of the conditioning columns. If None or empty, the test is marginal.
+
+    alpha : float, optional (default: 0.05)
+        Significance level; the test rejects if ``p_value < alpha``.
+
+    Returns
+    -------
+    result : CIResult
+        ``statistic`` is the V-statistic, ``p_value`` the one from the Gamma
+        approximation and ``reject`` the decision at level ``alpha``.
     """
-    return KCI(**kwargs).compute_pvalue(data_x, data_y, data_z)  # type: ignore[arg-type]
+    z_values = data[z].to_numpy(dtype=np.float64) if z else None
+    return KCI().test(
+        data[x].to_numpy(dtype=np.float64), data[y].to_numpy(dtype=np.float64), z_values, alpha
+    )

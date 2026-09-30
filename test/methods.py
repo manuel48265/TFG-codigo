@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 
 import numpy as np
 from numpy.typing import NDArray
@@ -7,7 +8,7 @@ from numpy.typing import NDArray
 from src.CI_tests.common import CIResult
 from src.CI_tests.Fisher_Z.fisher_z import FisherZ
 from src.CI_tests.GCM.gcm import gcm_test
-from src.CI_tests.KCI.kci import kci_test
+from src.CI_tests.KCI.kci import KCI
 from test.CI_tests.Fisher_Z.fisher_z_causallearn_bridge import fisher_z_test_causallearn
 from test.CI_tests.GCM.gcm_r_bridge import gcm_test_r
 from test.CI_tests.KCI.kci_causallearn_bridge import kci_test_causallearn
@@ -60,13 +61,7 @@ def _gcm_kwargs(
 def _kci_kwargs(
     x: NDArray[np.float64], y: NDArray[np.float64], z: NDArray[np.float64]
 ) -> dict[str, object]:
-    return {"data_x": x.reshape(-1, 1), "data_y": y.reshape(-1, 1), "data_z": z}
-
-
-def _kci_bootstrap_kwargs(
-    x: NDArray[np.float64], y: NDArray[np.float64], z: NDArray[np.float64]
-) -> dict[str, object]:
-    return _kci_kwargs(x, y, z) | {"approx": False}
+    return {"x": x.reshape(-1, 1), "y": y.reshape(-1, 1), "z": z}
 
 
 def _fisher_z_kwargs(
@@ -77,7 +72,12 @@ def _fisher_z_kwargs(
 
 METHODS = [
     RegisteredMethod("gcm", gcm_test, gcm_test_r, _gcm_kwargs),
-    RegisteredMethod("kci", kci_test, kci_test_causallearn, _kci_kwargs),
-    RegisteredMethod("kci_bootstrap", kci_test, kci_test_causallearn, _kci_bootstrap_kwargs),
+    RegisteredMethod("kci", KCI().test, kci_test_causallearn, _kci_kwargs),
+    RegisteredMethod(
+        "kci_bootstrap",
+        KCI(approx=False).test,
+        partial(kci_test_causallearn, approx=False),
+        _kci_kwargs,
+    ),
     RegisteredMethod("fisher_z", FisherZ().test, fisher_z_test_causallearn, _fisher_z_kwargs),
 ]

@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 import pytest
 
 from src.CI_tests.KCI.kci import KCI, kci_test
@@ -11,11 +12,8 @@ def _random_kernel(rng: np.random.Generator, n: int) -> np.ndarray:
 
 
 def test_get_eigenvects_prod_matches_hadamard_product() -> None:
-    """🇬🇧 With the full (untruncated) eigenbasis, eigenvects_prod's
+    """With the full (untruncated) eigenbasis, eigenvects_prod's
     reconstruction should equal the Hadamard product Kx*Ky.
-
-    🇪🇸 Con la base propia completa (sin truncar), la reconstrucción de
-    eigenvects_prod debe igualar el producto de Hadamard Kx*Ky.
     """
     rng = np.random.default_rng(0)
     n = 8
@@ -30,17 +28,11 @@ def test_get_eigenvects_prod_matches_hadamard_product() -> None:
 
 
 def test_KCI_V_statistic_reuse_matches_independent_recompute() -> None:
-    """🇬🇧 When Kzx and Kzy are the same matrix and epsilon matches, the
+    """When Kzx and Kzy are the same matrix and epsilon matches, the
     "reuse Rzx for Ky" shortcut must give exactly the same KyR as
     recomputing center_kernel_matrix_regression independently for Ky — it's
     an exact algebraic reuse (Rz depends only on Kz/eps), not an
     approximation.
-
-    🇪🇸 Cuando Kzx y Kzy son la misma matriz y epsilon coincide, el atajo de
-    "reutilizar Rzx para Ky" debe dar exactamente el mismo KyR que
-    recalcular center_kernel_matrix_regression de forma independiente para
-    Ky — es una reutilización algebraica exacta (Rz depende solo de
-    Kz/eps), no una aproximación.
     """
     rng = np.random.default_rng(2)
     n = 12
@@ -60,14 +52,9 @@ def test_KCI_V_statistic_reuse_matches_independent_recompute() -> None:
 
 
 def test_KCI_V_statistic_recomputes_when_epsilon_differs() -> None:
-    """🇬🇧 With different epsilon_x/epsilon_y, the reuse shortcut must not
+    """With different epsilon_x/epsilon_y, the reuse shortcut must not
     fire — KyR should match an independent recompute with epsilon_y, not a
     reuse of Rzx (which was built with epsilon_x).
-
-    🇪🇸 Con epsilon_x/epsilon_y distintos, el atajo de reutilización no debe
-    activarse — KyR debe coincidir con un recálculo independiente con
-    epsilon_y, no con una reutilización de Rzx (que se construyó con
-    epsilon_x).
     """
     rng = np.random.default_rng(3)
     n = 10
@@ -84,11 +71,8 @@ def test_KCI_V_statistic_recomputes_when_epsilon_differs() -> None:
 
 
 def test_kernel_matrix_builds_symmetric_centered_matrices() -> None:
-    """🇬🇧 Kx/Ky/Kzx are symmetric and centered (zero row sums); Kzx and Kzy
+    """Kx/Ky/Kzx are symmetric and centered (zero row sums); Kzx and Kzy
     are the same matrix.
-
-    🇪🇸 Kx/Ky/Kzx son simétricas y están centradas (suma por fila cero);
-    Kzx y Kzy son la misma matriz.
     """
     rng = np.random.default_rng(0)
     n = 20
@@ -106,10 +90,7 @@ def test_kernel_matrix_builds_symmetric_centered_matrices() -> None:
 
 
 def test_kernel_matrix_respects_manual_width() -> None:
-    """🇬🇧 A manual `kwidthz` skips the empirical heuristic entirely.
-
-    🇪🇸 Un `kwidthz` manual salta por completo la heurística empírica.
-    """
+    """A manual `kwidthz` skips the empirical heuristic entirely."""
     rng = np.random.default_rng(1)
     n = 20
     data_x = rng.standard_normal((n, 1))
@@ -122,33 +103,42 @@ def test_kernel_matrix_respects_manual_width() -> None:
     assert not np.allclose(Kz_manual, Kz_empirical)
 
 
-def test_kci_test_does_not_reject_independence() -> None:
-    """🇬🇧 X and Y both depend on Z but not on each other given Z.
-
-    🇪🇸 X e Y dependen ambas de Z pero no entre sí dado Z.
-    """
+def _dataframe(direct_effect: float) -> pd.DataFrame:
+    """X and Y both depend on Z; Y also depends on X with weight ``direct_effect``."""
     rng = np.random.default_rng(1)
     n = 300
-    z = rng.standard_normal((n, 1))
-    x = np.sin(z[:, 0]) + rng.standard_normal(n)
-    y = np.cos(z[:, 0]) + rng.standard_normal(n)
-
-    result = kci_test(x.reshape(-1, 1), y.reshape(-1, 1), z)
-
-    assert not result.reject
+    z = rng.standard_normal(n)
+    x = np.sin(z) + rng.standard_normal(n)
+    y = np.cos(z) + direct_effect * x + rng.standard_normal(n)
+    return pd.DataFrame({"x": x, "y": y, "z": z})
 
 
-def test_kci_test_rejects_dependence() -> None:
-    """🇬🇧 Same as above, but Y also depends directly on X.
+def test_does_not_reject_independence() -> None:
+    assert not kci_test(_dataframe(0.0), "x", "y", ["z"]).reject
 
-    🇪🇸 Igual que arriba, pero Y también depende directamente de X.
-    """
-    rng = np.random.default_rng(1)
-    n = 300
-    z = rng.standard_normal((n, 1))
-    x = np.sin(z[:, 0]) + rng.standard_normal(n)
-    y = np.cos(z[:, 0]) + x + rng.standard_normal(n)
 
-    result = kci_test(x.reshape(-1, 1), y.reshape(-1, 1), z)
+def test_rejects_dependence() -> None:
+    assert kci_test(_dataframe(1.0), "x", "y", ["z"]).reject
 
-    assert result.reject
+
+def test_function_matches_class_method() -> None:
+    df = _dataframe(1.0)
+
+    expected = KCI().test(df["x"].to_numpy(), df["y"].to_numpy(), df[["z"]].to_numpy())
+
+    assert kci_test(df, "x", "y", ["z"]) == expected
+
+
+def test_empty_z_list_is_the_marginal_test() -> None:
+    df = _dataframe(1.0)
+
+    assert kci_test(df, "x", "y", []) == kci_test(df, "x", "y")
+    assert kci_test(df, "x", "y").reject
+
+
+def test_reject_follows_alpha() -> None:
+    df = _dataframe(0.0)
+    p_value = kci_test(df, "x", "y", ["z"]).p_value
+
+    assert kci_test(df, "x", "y", ["z"], alpha=p_value + 1e-9).reject
+    assert not kci_test(df, "x", "y", ["z"], alpha=p_value - 1e-9).reject
