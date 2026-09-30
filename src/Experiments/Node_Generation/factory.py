@@ -14,7 +14,8 @@ CategoricalFunction = Callable[[NDArray[np.int64]], NDArray[np.float64]]
 # outer "transform" and the "noise" of the node generator.
 
 ## Shape ##
-# Mean functions u -> f(u); the linear case is the identity.
+# Mean functions u -> f(u); the linear case is the identity. They are applied to a parent
+# and the result is standardized (see standardized_term in node_generator.py).
 
 
 def sine_shape(rng: np.random.Generator) -> ShapeFunction:
@@ -52,7 +53,10 @@ def identity_shape(rng: np.random.Generator) -> ShapeFunction:
 
 
 ## Scale ##
-# Standard-deviation functions u -> s(u) > 0; the unit scale is homoscedastic.
+# Standard-deviation functions u -> s(u) > 0; the unit scale is homoscedastic. Only their
+# shape matters: they are mapped linearly onto the range of noise levels (see
+# scale_position in node_generator.py), so constants that only shift or rescale them
+# change nothing.
 
 
 def sqrt_quadratic_scale(rng: np.random.Generator) -> ShapeFunction:
@@ -78,7 +82,18 @@ def unit_scale(rng: np.random.Generator) -> ShapeFunction:
 
 
 ## Transform ##
-# Outer transforms t -> g(t) applied to the noisy mean (post-nonlinear models).
+# Outer transforms t -> g(t) applied to the noisy mean (post-nonlinear models). They are
+# an extra layer of difficulty for detection, not a way of making it impossible, so they
+# must not change the shape of the data drastically. They act on an input of unit
+# variance, which for Gaussian data spans about [-GAUSSIAN_RANGE, GAUSSIAN_RANGE], and
+# kappa is set so that the transform stays inside [-TARGET_RANGE, TARGET_RANGE]: the
+# argument kappa * t of tanh and asinh does, and so does the output of exp(kappa * t) - 1.
+# Each transform draws kappa between half of that bound and the bound.
+
+GAUSSIAN_RANGE = 3.0
+TARGET_RANGE = 5.0
+KAPPA_FOR_ARGUMENT = TARGET_RANGE / GAUSSIAN_RANGE
+KAPPA_FOR_OUTPUT = float(np.log1p(TARGET_RANGE)) / GAUSSIAN_RANGE
 
 
 def identity_transform(rng: np.random.Generator) -> ShapeFunction:
@@ -86,18 +101,18 @@ def identity_transform(rng: np.random.Generator) -> ShapeFunction:
 
 
 def tanh_transform(rng: np.random.Generator) -> ShapeFunction:
-    kappa = rng.uniform(0.25, 1.0)
+    kappa = rng.uniform(KAPPA_FOR_ARGUMENT / 2, KAPPA_FOR_ARGUMENT)
     return lambda t: np.tanh(kappa * t)
 
 
 def asinh_transform(rng: np.random.Generator) -> ShapeFunction:
-    kappa = rng.uniform(0.25, 1.0)
+    kappa = rng.uniform(KAPPA_FOR_ARGUMENT / 2, KAPPA_FOR_ARGUMENT)
     return lambda t: np.arcsinh(kappa * t)
 
 
 def exponential_transform(rng: np.random.Generator) -> ShapeFunction:
-    kappa = rng.uniform(0.25, 0.5)
-    return lambda t: np.exp(kappa * t)
+    kappa = rng.uniform(KAPPA_FOR_OUTPUT / 2, KAPPA_FOR_OUTPUT)
+    return lambda t: np.exp(kappa * t) - 1
 
 
 ## Noise ##
@@ -110,15 +125,6 @@ def gaussian_noise(rng: np.random.Generator) -> NoiseSampler:
 
 def laplace_noise(rng: np.random.Generator) -> NoiseSampler:
     return lambda n: rng.laplace(0.0, 1.0 / np.sqrt(2.0), n)
-
-
-def exponential_noise(rng: np.random.Generator) -> NoiseSampler:
-    return lambda n: rng.exponential(1.0, n) - 1.0
-
-
-def gumbel_noise(rng: np.random.Generator) -> NoiseSampler:
-    beta = np.sqrt(6.0) / np.pi
-    return lambda n: rng.gumbel(-beta * np.euler_gamma, beta, n)
 
 
 ## Factory ##
@@ -206,7 +212,8 @@ class OuterTransformFactory(FunctionFactory):
     )
 
 
-# Noise cases: Gaussian, non-Gaussian (Laplace) or any of the four samplers.
+# Noise cases: Gaussian, the standard in the literature on CI tests, or Laplace, the
+# only non-Gaussian noise, used by the linear non-Gaussian model.
 
 
 class GaussianNoiseFactory(NoiseFactory):
@@ -215,10 +222,6 @@ class GaussianNoiseFactory(NoiseFactory):
 
 class NonGaussianNoiseFactory(NoiseFactory):
     _BUILDERS = (laplace_noise,)
-
-
-class GeneralNoiseFactory(NoiseFactory):
-    _BUILDERS = (gaussian_noise, laplace_noise, exponential_noise, gumbel_noise)
 
 
 # Nominal variables: the mean and the scale are lookup tables indexed by the

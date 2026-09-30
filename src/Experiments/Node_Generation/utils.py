@@ -111,8 +111,8 @@ def mean_term_generator(
 
 
 def categorical_num_terms(rng: np.random.Generator) -> int:
-    """Draw the number of categories of an ordinal or nominal variable, between 3 and 6."""
-    return int(rng.integers(3, 7))
+    """Draw the number of categories of an ordinal or nominal variable, between 3 and 5."""
+    return int(rng.integers(3, 6))
 
 
 def standardize_scale(x: NDArray[np.float64], bound: float = 5.0) -> NDArray[np.float64]:
@@ -140,6 +140,22 @@ def standardize_scale(x: NDArray[np.float64], bound: float = 5.0) -> NDArray[np.
     return (bound / max_abs) * x
 
 
+def standardize_variance(x: NDArray[np.float64]) -> NDArray[np.float64]:
+    """Center ``x`` and scale it to unit variance.
+
+    Parameters
+    ----------
+    x : ndarray
+        Values to standardize; they must not be constant.
+
+    Returns
+    -------
+    standardized : ndarray
+        Values with mean 0 and variance 1, with the same shape as ``x``.
+    """
+    return (x - x.mean()) / x.std()
+
+
 def apply_function(function: NodeFunction, parent_series: pd.Series) -> NDArray[np.float64]:
     """Apply a mean or scale function to a parent, reading nominal parents as category codes.
 
@@ -160,61 +176,6 @@ def apply_function(function: NodeFunction, parent_series: pd.Series) -> NDArray[
         codes = parent_series.cat.codes.to_numpy().astype(np.int64)
         return cast(CategoricalFunction, function)(codes)
     return cast(ShapeFunction, function)(parent_series.to_numpy())
-
-
-def rescale_to_band(x: NDArray[np.float64], low: float, high: float) -> NDArray[np.float64]:
-    """Map ``x`` linearly onto ``[low, high]`` (min-max); a constant ``x`` goes to the midpoint.
-
-    Parameters
-    ----------
-    x : ndarray
-        Values to rescale.
-
-    low : float
-        Lower end of the band.
-
-    high : float
-        Upper end of the band.
-
-    Returns
-    -------
-    rescaled : ndarray
-        Values in ``[low, high]``, with the same shape as ``x``.
-    """
-    xmin, xmax = x.min(), x.max()
-    if xmax > xmin:
-        return low + (high - low) * (x - xmin) / (xmax - xmin)
-    return np.full_like(x, (low + high) / 2)
-
-
-def softmax(logits: NDArray[np.float64]) -> NDArray[np.float64]:
-    """Return the softmax of each row of ``logits``, computed in a numerically stable way."""
-    shifted = logits - logits.max(axis=1, keepdims=True)
-    exp = np.exp(shifted)
-    return exp / exp.sum(axis=1, keepdims=True)
-
-
-def sample_categorical_rows(
-    rng: np.random.Generator, probs: NDArray[np.float64]
-) -> NDArray[np.intp]:
-    """Draw one category per row of ``probs``, by inverse transform sampling.
-
-    Parameters
-    ----------
-    rng : Generator
-        Source of randomness.
-
-    probs : ndarray of shape (n, k)
-        Category probabilities of each row; every row sums to 1.
-
-    Returns
-    -------
-    categories : ndarray of shape (n,)
-        Sampled category codes.
-    """
-    cumulative = np.cumsum(probs, axis=1)
-    u = rng.uniform(size=(probs.shape[0], 1))
-    return (u > cumulative).sum(axis=1)
 
 
 def robust_scale(x: NDArray[np.float64]) -> float:

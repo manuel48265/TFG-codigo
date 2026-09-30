@@ -22,18 +22,20 @@ from src.Experiments.Node_Generation.node_generator import (
     MAX_TARGET_R2,
     MIN_PARENT_SHARE,
     MIN_TARGET_R2,
-    adjust_signal_noise_ratio,
     compress_and_standardize,
     discretization,
     draw_function,
     evaluate_scale,
+    generate_nominal,
     generate_root,
     get_mean_functions,
     get_scale_function,
     latent_to_variable,
     mean_coefficients,
     node_generator,
+    node_generator_with_no_parents,
     noise_std,
+    noise_std_at,
     noise_std_bounds,
     r2_to_position,
     scale_position,
@@ -97,9 +99,6 @@ SHAPES = [
 PARENT_LAWS: dict[str, Callable[[np.random.Generator, int], np.ndarray]] = {
     "gaussian": lambda rng, n: rng.standard_normal(n),
     "laplace": lambda rng, n: rng.laplace(size=n),
-    "exponential": lambda rng, n: rng.exponential(size=n),
-    "gumbel": lambda rng, n: rng.gumbel(size=n),
-    "uniform": lambda rng, n: rng.uniform(-1, 1, n),
 }
 
 
@@ -181,40 +180,6 @@ def test_mean_of_independent_terms_has_unit_variance() -> None:
     mean_signal = terms @ mean_coefficients(rng, 3)[0]
 
     assert mean_signal.var() == pytest.approx(1.0, abs=0.03)
-
-
-def test_achieved_r2_of_the_true_mean_stays_in_the_target_band() -> None:
-    n = 20000
-    r2 = []
-    for seed in range(100):
-        rng = np.random.default_rng(seed)
-        signal = rng.standard_normal(n)
-        noise = adjust_signal_noise_ratio(rng, signal, rng.standard_normal(n))
-        r2.append(signal.var() / (signal + noise).var())
-
-    assert min(r2) > MIN_TARGET_R2 - 0.02
-    assert max(r2) < MAX_TARGET_R2 + 0.01
-
-
-def test_constant_signal_leaves_the_noise_unchanged() -> None:
-    rng = np.random.default_rng(0)
-    noise = rng.standard_normal(100)
-
-    result = adjust_signal_noise_ratio(rng, np.ones(100), noise)
-
-    assert result is noise
-
-
-def test_calibration_only_rescales_the_noise() -> None:
-    rng = np.random.default_rng(1)
-    signal = rng.standard_normal(500)
-    raw_noise = (1 + np.abs(signal)) * rng.standard_normal(500)
-
-    noise = adjust_signal_noise_ratio(rng, signal, raw_noise)
-
-    ratio = noise / raw_noise
-    assert ratio == pytest.approx(np.full(500, ratio[0]))
-    assert ratio[0] > 0
 
 
 def test_node_generator_weakest_parent_explains_at_least_the_minimum_share() -> None:
@@ -602,7 +567,7 @@ def test_latent_to_variable_builds_each_target_type() -> None:
     assert set(binary.unique()) == {0, 1}
     assert isinstance(ordinal.dtype, pd.CategoricalDtype)
     assert ordinal.dtype.ordered
-    assert 3 <= len(ordinal.cat.categories) <= 6
+    assert 3 <= len(ordinal.cat.categories) <= 5
 
 
 def test_latent_to_variable_rejects_a_nominal_target() -> None:
@@ -648,4 +613,146 @@ def test_node_generator_produces_a_valid_variable_for_any_model_and_parents(
         else:
             assert isinstance(node.dtype, pd.CategoricalDtype)
             assert node.dtype.ordered == (target == VariableType.ORDINAL)
-            assert 3 <= len(node.cat.categories) <= 6
+            assert 3 <= len(node.cat.categories) <= 5
+
+
+def test_roots_follow_the_noise_of_the_model() -> None:
+    """Gaussian models give Gaussian roots; only the linear non-Gaussian one gives Laplace roots."""
+    rng = np.random.default_rng(0)
+
+    gaussian = node_generator_with_no_parents(rng, 100000, LINEAR_GAUSSIAN, VariableType.CONTINUOUS)
+    laplace = node_generator_with_no_parents(
+        rng, 100000, LINEAR_NON_GAUSSIAN, VariableType.CONTINUOUS
+    )
+
+    assert stats.kurtosis(gaussian) == pytest.approx(0.0, abs=0.1)
+    assert stats.kurtosis(laplace) == pytest.approx(3.0, abs=0.3)
+
+
+def test_noise_std_at_reaches_the_bounds_of_the_band() -> None:
+    variance = 1.6
+    lowest, highest = noise_std_bounds(variance)
+
+    std = noise_std_at(variance, np.array([0.0, 0.5, 1.0]))
+
+    assert std == pytest.approx([lowest, (lowest + highest) / 2, highest])
+
+
+def test_noise_std_is_noise_std_at_the_scale_position() -> None:
+    scale_values = np.random.default_rng(0).standard_normal(200)
+    position = scale_position(np.random.default_rng(1), scale_values)
+
+    expected = noise_std_at(1.3, position)
+
+    assert noise_std(np.random.default_rng(1), 1.3, scale_values) == pytest.approx(expected)
+
+
+def test_standardized_term_without_compression_keeps_a_linear_function_linear() -> None:
+    rng = np.random.default_rng(0)
+    parent = pd.Series(standardize_scale(rng.standard_normal(500)))
+
+    term = standardized_term(lambda u: u, parent, compress=False)
+
+    assert np.corrcoef(parent, term)[0, 1] ** 2 == pytest.approx(1.0)
+    assert term.mean() == pytest.approx(0.0, abs=1e-9)
+    assert term.std() == pytest.approx(1.0)
+
+
+def test_a_linear_gaussian_node_is_linear_for_a_partial_correlation_test() -> None:
+    """Two linear Gaussian children of Z are conditionally independent given Z, and the
+    partial correlation test rejects at about its level, not far above it.
+    """
+    n, repetitions = 300, 150
+    rejections = 0
+    for seed in range(repetitions):
+        rng = np.random.default_rng(seed)
+        z_values = standardize_scale(rng.standard_normal(n))
+        z = pd.Series(z_values, name="z")
+        data = pd.DataFrame({"z": z})
+        x = node_generator(rng, data, ["z"], LINEAR_GAUSSIAN, VariableType.CONTINUOUS)
+        y = node_generator(rng, data, ["z"], LINEAR_GAUSSIAN, VariableType.CONTINUOUS)
+        given = np.asarray(z_values, dtype=np.float64).reshape(-1, 1)
+        rejections += FisherZ().test(x.to_numpy(), y.to_numpy(), given).reject
+
+    assert rejections / repetitions < 0.12
+
+
+def _utilities_means(n: int, num_categories: int = 4) -> np.ndarray:
+    rng = np.random.default_rng(3)
+    return rng.standard_normal((n, num_categories))
+
+
+def test_generate_nominal_returns_valid_codes_that_follow_the_mean() -> None:
+    n = 4000
+    mean_signal = _utilities_means(n)
+
+    codes = generate_nominal(np.random.default_rng(0), mean_signal, np.ones(n))
+
+    assert set(np.unique(codes)) <= {0, 1, 2, 3}
+    assert np.mean(codes == mean_signal.argmax(axis=1)) > 0.4  # chance is 0.25
+
+
+def test_generate_nominal_is_more_predictable_where_the_noise_is_lower() -> None:
+    n = 6000
+    mean_signal = _utilities_means(n)
+    scale_values = np.linspace(0.0, 1.0, n)
+
+    codes = generate_nominal(np.random.default_rng(0), mean_signal, scale_values)
+
+    agreement = codes == mean_signal.argmax(axis=1)
+    first, second = agreement[: n // 3].mean(), agreement[-(n // 3) :].mean()
+    assert abs(first - second) > 0.15  # the orientation of the scale is random
+
+
+def test_generate_nominal_transmits_a_variance_only_dependence_with_constant_means() -> None:
+    """With constant category means, a scale parent changes the distribution of the category."""
+    n = 6000
+    base = np.array([1.0, 0.3, -0.4, -0.9])
+    mean_signal = np.tile(base, (n, 1))
+    scale_values = np.linspace(0.0, 1.0, n)
+
+    codes = generate_nominal(np.random.default_rng(0), mean_signal, scale_values)
+
+    top_share_first = np.mean(codes[: n // 3] == 0)
+    top_share_last = np.mean(codes[-(n // 3) :] == 0)
+    assert abs(top_share_first - top_share_last) > 0.1
+
+
+def test_a_nominal_node_without_parents_on_the_mean_is_never_constant() -> None:
+    """A scale parent alone still gives a variable with several categories."""
+    n = 400
+    for seed in range(100):
+        rng = np.random.default_rng(seed)
+        data = pd.DataFrame({"scale_parent": standardize_scale(rng.standard_normal(n))})
+
+        node = node_generator(
+            rng, data, ["scale_parent"], LOCAL_SCALE_NOISE_MODELS, VariableType.NOMINAL
+        )
+
+        assert node.nunique() >= 2
+        assert node.value_counts(normalize=True).max() < 0.95
+
+
+def test_nominal_temperature_band_goes_from_almost_deterministic_to_almost_uniform() -> None:
+    """With four equally spread utilities, the modal category has about 0.93 at the lowest
+    temperature and about 0.37 at the highest, as the docstring of ``generate_nominal`` says.
+    """
+    utilities = np.array([1.3, 0.4, -0.4, -1.3])
+    spread = utilities.std()
+    modal = []
+    for temperature in (spread / 3.0, spread * 3.0):
+        logits = utilities / temperature
+        modal.append(np.exp(logits).max() / np.exp(logits).sum())
+
+    assert modal[0] == pytest.approx(0.93, abs=0.02)
+    assert modal[1] == pytest.approx(0.37, abs=0.02)
+
+
+@pytest.mark.parametrize("n_outputs", [2, 3, 4, 5, 6])
+def test_a_single_parent_never_gets_identical_coefficients_for_all_categories(
+    n_outputs: int,
+) -> None:
+    for seed in range(500):
+        coefficients = mean_coefficients(np.random.default_rng(seed), 1, n_outputs)
+
+        assert coefficients.min() < 0.0 < coefficients.max()

@@ -67,8 +67,15 @@ class Model:
         self.noise_functions = noise_functions
 
 
-# Model families: linear Gaussian, linear non-Gaussian, additive noise (nonlinear mean),
-# post-nonlinear (outer transform) and local scale (heteroscedastic noise).
+# Model families. All use Gaussian noise except the linear non-Gaussian one (Laplace).
+# - LINEAR_GAUSSIAN: linear means and homoscedastic noise; exactly linear, so a partial
+#   correlation test is exact on it.
+# - LINEAR_NON_GAUSSIAN: the same with Laplace noise.
+# - ADDITIVE_NOISE_MODELS: nonlinear means, additive homoscedastic noise.
+# - POST_NON_LINEAR: nonlinear means and an increasing outer transform; the model is not
+#   additive but the dependences, and their detectability, are kept.
+# - LOCAL_SCALE_NOISE_MODELS: nonlinear means and a scale parent that changes the noise
+#   level inside the detectable range.
 LINEAR_GAUSSIAN = Model(
     LinearShapeFactory,
     CategoricalVariablesMeanFactory,

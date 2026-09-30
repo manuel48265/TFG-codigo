@@ -1,4 +1,26 @@
-from typing import Literal, cast
+"""Generation of the variables of a structural causal model, one node at a time.
+
+A node is generated from its parents with the functions of a model family (see
+``causal_models``). The pieces are designed so that every edge of the graph stays
+detectable, which lets an experiment measure the behavior of the CI tests and not the
+weakness of the generated effects:
+
+- Each parent acts through a term standardized to unit variance, and the variance of the
+  mean is shared among the parents with a minimum share for each of them
+  (``standardized_term``, ``mean_coefficients``).
+- The noise is set relative to the signal: its level stays inside the range that
+  corresponds to an R2 between ``MIN_TARGET_R2`` and ``MAX_TARGET_R2``, and a parent that
+  acts on the scale moves it inside that range following the shape of its function
+  (``noise_std``).
+- A continuous, binary or ordinal node is an outer transform of the standardized mean
+  plus noise, converted to its type (``latent_to_variable``); a nominal node is drawn from
+  a multinomial logit whose temperature plays the role of the noise level
+  (``generate_nominal``).
+- The noise is Gaussian, as in the literature on CI tests, except in the linear
+  non-Gaussian model, where it is Laplace.
+"""
+
+from typing import Literal
 
 import numpy as np
 import pandas as pd
@@ -8,7 +30,7 @@ from src.Experiments.Node_Generation.causal_models import Model
 from src.Experiments.Node_Generation.factory import (
     CategoricalFactory,
     FunctionFactory,
-    GeneralNoiseFactory,
+    LinearShapeFactory,
 )
 from src.Experiments.Node_Generation.utils import (
     NodeFunction,
@@ -16,72 +38,19 @@ from src.Experiments.Node_Generation.utils import (
     apply_function,
     categorical_num_terms,
     mean_term_generator,
-    rescale_to_band,
     robust_scale,
-    sample_categorical_rows,
-    softmax,
     split_scale_parent,
     standardize_scale,
+    standardize_variance,
     variable_type,
 )
 
-# Band of the R2 of the true mean that the noise is calibrated to (see
-# adjust_signal_noise_ratio). Low-R2 regimes are excluded on purpose.
+# Band of the R2 of the true mean that the noise is calibrated to (see noise_std_bounds).
+# Low-R2 regimes are excluded on purpose.
 # TODO: the band is a provisional choice; tune it per domain (physical data tends to
 # have higher R2 than biological data).
 MIN_TARGET_R2 = 0.4
 MAX_TARGET_R2 = 0.95
-
-
-def adjust_signal_noise_ratio(
-    rng: np.random.Generator,
-    signal: NDArray[np.float64],
-    raw_noise: NDArray[np.float64],
-) -> NDArray[np.float64]:
-    """Scale the noise so that the signal explains a random share of the variance of the node.
-
-    A target R2 is drawn uniformly from ``[MIN_TARGET_R2, MAX_TARGET_R2]``, and the
-    noise is multiplied by the constant that makes ``var(signal) / (var(signal) +
-    var(noise))`` equal to it. That is the R2 of the true mean function, which a
-    linear regression reaches only if the mean is linear. The shape of the noise,
-    including any dependence of its scale on a parent, is kept: only its overall
-    level changes. If the signal is constant, the noise is returned unchanged.
-
-    The noise has to be set relative to the signal. If its variance were much larger
-    than the signal's, the node would be mostly noise and the dependence on its
-    parents could not be told from it; the minimum R2 excludes that regime, since no
-    CI test can be expected to detect a relationship that is indistinguishable from
-    noise. The maximum keeps some noise in every node. The idea of normalizing the
-    noise with respect to the signal comes from "A Scale-invariant Sorting criterion
-    to find causal order additive noise Models".
-
-    Parameters
-    ----------
-    rng : Generator
-        Source of randomness.
-
-    signal : ndarray of shape (n,)
-        Mean of the node.
-
-    raw_noise : ndarray of shape (n,)
-        Noise before calibration.
-
-    Returns
-    -------
-    noise : ndarray of shape (n,)
-        ``raw_noise`` multiplied by a positive constant.
-    """
-    var_signal = np.var(signal)
-    if var_signal == 0.0:
-        return raw_noise
-
-    target_r2 = rng.uniform(MIN_TARGET_R2, MAX_TARGET_R2)
-    target_snr = target_r2 / (1 - target_r2)
-
-    var_noise = np.var(raw_noise)
-    coeff = np.sqrt(var_signal / (target_snr * var_noise))
-
-    return coeff * raw_noise
 
 
 def noise_std_bounds(signal_variance: float) -> tuple[float, float]:
@@ -91,6 +60,14 @@ def noise_std_bounds(signal_variance: float) -> tuple[float, float]:
     signal explain a share ``R2`` of the variance. The smallest noise compatible with
     the band of target R2 is the one for ``MAX_TARGET_R2`` and the largest is the one
     for ``MIN_TARGET_R2``.
+
+    The noise has to be set relative to the signal. If its variance were much larger
+    than the signal's, the node would be mostly noise and the dependence on its
+    parents could not be told from it; the minimum R2 excludes that regime, since no
+    CI test can be expected to detect a relationship that is indistinguishable from
+    noise. The maximum keeps some noise in every node. The idea of normalizing the
+    noise with respect to the signal comes from "A Scale-invariant Sorting criterion
+    to find causal order additive noise Models".
 
     Parameters
     ----------
@@ -179,19 +156,43 @@ def scale_position(
     return 1.0 - position if flip else position
 
 
+def noise_std_at(signal_variance: float, position: NDArray[np.float64]) -> NDArray[np.float64]:
+    """Return the noise standard deviation at given positions in the range of noise levels.
+
+    The standard deviation moves linearly between the two bounds of
+    ``noise_std_bounds``: position 0 gives the noise of ``MAX_TARGET_R2`` and position
+    1 the noise of ``MIN_TARGET_R2``.
+
+    Parameters
+    ----------
+    signal_variance : float
+        Variance of the signal (mean) of the node.
+
+    position : ndarray of shape (n,)
+        Positions in ``[0, 1]``, as given by ``scale_position``.
+
+    Returns
+    -------
+    std : ndarray of shape (n,)
+        Noise standard deviation at each position.
+    """
+    lowest, highest = noise_std_bounds(signal_variance)
+    return lowest + (highest - lowest) * position
+
+
 def noise_std(
     rng: np.random.Generator, signal_variance: float, scale_values: NDArray[np.float64]
 ) -> NDArray[np.float64]:
     """Return the noise standard deviation of each observation of a node.
 
-    The standard deviation moves linearly between the two bounds of
-    ``noise_std_bounds``, following the position given by ``scale_position``. The local R2
-    of every observation therefore stays inside the band ``[MIN_TARGET_R2,
-    MAX_TARGET_R2]``: heteroscedasticity changes how much noise each observation
-    has, but never takes the node out of the range where its mean can be detected.
-    This replaces choosing a fixed noise level (or an arbitrary range of scales) with
-    moving inside the range of noise levels known to be detectable. The R2 of the
-    node is not drawn: it follows from how the observations are placed in the range.
+    The standard deviation moves between the two bounds of ``noise_std_bounds``
+    following the position given by ``scale_position``. The local R2 of every
+    observation therefore stays inside the band ``[MIN_TARGET_R2, MAX_TARGET_R2]``:
+    heteroscedasticity changes how much noise each observation has, but never takes the
+    node out of the range where its mean can be detected. This replaces choosing a fixed
+    noise level (or an arbitrary range of scales) with moving inside the range of noise
+    levels known to be detectable. The R2 of the node is not drawn: it follows from how
+    the observations are placed in the range.
 
     Parameters
     ----------
@@ -209,14 +210,102 @@ def noise_std(
     std : ndarray of shape (n,)
         Noise standard deviation of each observation.
     """
-    lowest, highest = noise_std_bounds(signal_variance)
+    return noise_std_at(signal_variance, scale_position(rng, scale_values))
+
+
+# Range of the temperature of a nominal node, in units of the spread of the utilities
+# of its categories: from spread / NOMINAL_TEMPERATURE_FACTOR to spread times it.
+NOMINAL_TEMPERATURE_FACTOR = 3.0
+
+
+def generate_nominal(
+    rng: np.random.Generator,
+    mean_signal: NDArray[np.float64],
+    scale_values: NDArray[np.float64],
+) -> NDArray[np.intp]:
+    """Generate the categories of a nominal node from a multinomial logit with temperature.
+
+    The probability of category ``k`` is the softmax of ``mean_signal[:, k] / T``, where
+    the temperature ``T`` of each observation follows the scale function (through
+    ``scale_position``, so it keeps the shape of the function): a scale parent makes the
+    category more or less predictable, in the same way that it makes a continuous node
+    more or less noisy. The categories are then sampled from those probabilities.
+
+    The temperature ranges from ``s / NOMINAL_TEMPERATURE_FACTOR`` to ``s *
+    NOMINAL_TEMPERATURE_FACTOR``, with ``s`` the spread (standard deviation across
+    categories) of the utilities. With a factor of 3, in a node of four categories the
+    most probable one has probability about 0.93 at the lowest temperature, where the
+    category is almost determined by the parents, and about 0.37 at the highest one,
+    where the categories are almost equally probable (0.25 would be exactly uniform).
+    The band thus goes from almost deterministic to almost uniform, which is the widest
+    change a scale parent can produce, and is measured in units of the utilities so it
+    does not depend on their scale. The temperature moves geometrically in it, since it
+    is a scale parameter.
+
+    A band derived from the band of R2 of continuous nodes would be too narrow here: the
+    categories would be dominated by the parents, and when no parent acts on the mean
+    many nodes would be almost constant. The temperature is what lets a scale parent be
+    detected, because a variable drawn by taking the largest of several noisy utilities
+    changes little when the noise level changes.
+
+    The outer transform of the model is not applied to nominal nodes: it would act on
+    the logits of every category in the same way and would not change their ranking.
+
+    Parameters
+    ----------
+    rng : Generator
+        Source of randomness.
+
+    mean_signal : ndarray of shape (n, n_categories)
+        Utility of each category at each observation. When no parent acts on the mean,
+        the same constant utilities for every observation.
+
+    scale_values : ndarray of shape (n,)
+        Scale function evaluated on the scale parent.
+
+    Returns
+    -------
+    codes : ndarray of shape (n,)
+        Category of each observation, from 0 to ``n_categories - 1``.
+    """
+    spread = float(mean_signal.std(axis=1).mean())
     position = scale_position(rng, scale_values)
-    return lowest + (highest - lowest) * position
+    temperature = (spread / NOMINAL_TEMPERATURE_FACTOR) * NOMINAL_TEMPERATURE_FACTOR ** (
+        2 * position
+    )
+    # Gumbel-max trick: the largest of the logits plus independent Gumbel noise is a
+    # sample of the softmax of the logits.
+    logits = mean_signal / temperature[:, None]
+    return (logits + rng.gumbel(size=logits.shape)).argmax(axis=1)
 
 
 def discretization(
     rng: np.random.Generator, num_bins: int, latent_j: NDArray[np.float64]
 ) -> NDArray[np.intp]:
+    """Split a continuous variable into ordered classes at random quantiles.
+
+    The cut levels are drawn uniformly, so the classes have random sizes; the codes
+    follow the order of the variable.
+
+    TODO: the classes can be very small (and, rarely, empty). A minimum share per class,
+    like the one of the parents of a node, would avoid classes too rare to be detected.
+
+    Parameters
+    ----------
+    rng : Generator
+        Source of randomness.
+
+    num_bins : int
+        Number of classes.
+
+    latent_j : ndarray of shape (n,)
+        Variable to split.
+
+    Returns
+    -------
+    codes : ndarray of shape (n,)
+        Class of each observation, from 0 to ``num_bins - 1``.
+    """
     cuts = np.sort(rng.uniform(0, 1, size=num_bins - 1))
     quantile_levels = np.concatenate(([0.0], cuts, [1.0]))
     X_j = pd.qcut(latent_j, q=quantile_levels, labels=False)
@@ -253,7 +342,9 @@ def compress_and_standardize(values: NDArray[np.float64]) -> NDArray[np.float64]
     return (compressed - compressed.mean()) / compressed.std()
 
 
-def standardized_term(function: NodeFunction, parent_series: pd.Series) -> NDArray[np.float64]:
+def standardized_term(
+    function: NodeFunction, parent_series: pd.Series, compress: bool = True
+) -> NDArray[np.float64]:
     """Return ``function`` applied to a parent, with its tails compressed, standardized.
 
     The mean of a node is a sum with one term per parent, and the terms must weigh
@@ -273,6 +364,12 @@ def standardized_term(function: NodeFunction, parent_series: pd.Series) -> NDArr
     data lie and the tails stop dominating. The standardization, which is part of
     that function, takes care of the first problem.
 
+    The compression is nonlinear, so it makes even the identity function nonlinear. In
+    a linear model that would break the model: a partial correlation test, which is exact
+    for a linear Gaussian node, would reject conditional independence far more often
+    than its level. With ``compress=False`` the term is only standardized and stays
+    exactly linear if the function is.
+
     Parameters
     ----------
     function : callable
@@ -281,6 +378,10 @@ def standardized_term(function: NodeFunction, parent_series: pd.Series) -> NDArr
 
     parent_series : Series
         Observations of the parent.
+
+    compress : bool, optional (default: True)
+        Whether to compress the tails before standardizing. It should be False for
+        linear models.
 
     Returns
     -------
@@ -297,7 +398,7 @@ def standardized_term(function: NodeFunction, parent_series: pd.Series) -> NDArr
         raise ValueError(
             f"Parent '{parent_series.name}' has a constant term and cannot affect the node."
         )
-    return compress_and_standardize(values)
+    return compress_and_standardize(values) if compress else standardize_variance(values)
 
 
 # Smallest share of the explained variance that each parent carries (see mean_coefficients).
@@ -323,6 +424,11 @@ def mean_coefficients(
     generated effects. The bound ``1 / n_parents`` keeps the minimum feasible
     for nodes with more than ten parents, where it forces equal shares.
 
+    With a single parent and several rows (the categories of a nominal node), each
+    coefficient is ``+1`` or ``-1``. If all had the same sign the rows would be
+    identical and the parent would not affect the node, so one sign is flipped in
+    that case.
+
     Parameters
     ----------
     rng : Generator
@@ -342,22 +448,22 @@ def mean_coefficients(
     floor = min(MIN_PARENT_SHARE, 1.0 / n_parents)
     free = 1.0 - n_parents * floor
     shares = floor + free * rng.dirichlet(np.ones(n_parents), size=n_outputs)
-    return rng.choice((-1.0, 1.0), size=shares.shape) * np.sqrt(shares)
+    signs = rng.choice((-1.0, 1.0), size=shares.shape)
+    if n_parents == 1 and n_outputs > 1 and (signs == signs[0, 0]).all():
+        signs[rng.integers(n_outputs), 0] *= -1.0
+    return signs * np.sqrt(shares)
 
 
 def _no_parent_mean_signal(rng: np.random.Generator, rules: Model, n: int) -> NDArray[np.float64]:
+    """Return a small baseline with the shape of a mean function, for a node without mean parents.
+
+    It is a mean function of the model applied to a uniform variable and bounded to a
+    small range, so that a node whose only parent acts on the scale is not plain noise
+    but has some shape. It is not a causal signal: no parent drives it.
+    """
     mean_function = rules.mean_functions.sample(rng)
     raw = mean_function(rng.uniform(-5.0, 5.0, size=n))
     return standardize_scale(raw, bound=0.3)
-
-
-def _no_parent_nominal(
-    rng: np.random.Generator, raw_scale: NDArray[np.float64], num_categories: int
-) -> NDArray[np.intp]:
-    base_utility = cast(NDArray[np.float64], mean_term_generator(rng, num_categories)) * 2.0
-    temperature = rescale_to_band(raw_scale, 0.05, 10.0)
-    probs = softmax(base_utility[None, :] / temperature[:, None])
-    return sample_categorical_rows(rng, probs)
 
 
 def draw_function(
@@ -429,6 +535,38 @@ def latent_to_variable(
     target: Literal[VariableType.CONTINUOUS, VariableType.ORDINAL, VariableType.BINARY],
     index: pd.Index,
 ) -> pd.Series:
+    """Convert a continuous latent variable into a continuous, binary or ordinal variable.
+
+    A continuous variable is the latent one scaled to a bounded range; a binary one is
+    the latent variable split in two classes, and an ordinal one is split in 3 to 5
+    ordered classes (see ``discretization``). Nominal variables are not built from a
+    latent variable (see ``generate_nominal``).
+
+    Parameters
+    ----------
+    rng : Generator
+        Source of randomness.
+
+    latent : ndarray of shape (n,)
+        Latent variable.
+
+    target : {VariableType.CONTINUOUS, VariableType.BINARY, VariableType.ORDINAL}
+        Type of the resulting variable.
+
+    index : Index
+        Index of the resulting Series.
+
+    Returns
+    -------
+    variable : Series
+        The variable, with ``index``. Ordinal variables have dtype ``category`` with
+        ordered categories.
+
+    Raises
+    ------
+    ValueError
+        If ``target`` is not one of the three types above.
+    """
     if target == VariableType.ORDINAL:
         num_bins = categorical_num_terms(rng)
         codes = discretization(rng, num_bins, latent)
@@ -492,7 +630,61 @@ def node_generator(
     rules: Model,
     target_variable: VariableType,
 ) -> pd.Series:
+    """Generate a node from its parents.
 
+    In a model with heteroscedastic noise, one parent chosen at random acts only on the
+    scale of the noise and the others act on the mean (``split_scale_parent``).
+
+    A continuous, binary or ordinal node is built in four steps. Each mean parent gives a
+    term standardized to unit variance, and the terms are combined with coefficients that
+    share the variance (``mean_coefficients``). The noise is drawn from the noise of the
+    model and multiplied by ``noise_std``, which keeps it inside the detectable range.
+    The sum is standardized to unit variance and goes through the outer transform of the
+    model, which keeps the dependences (it is increasing) and makes the model
+    non-additive. The result is converted to the type of the node (``latent_to_variable``).
+    If no parent acts on the mean, the mean is a small baseline with the shape of a mean
+    function (``_no_parent_mean_signal``) and the noise levels are set against a unit
+    variance.
+
+    A nominal node is drawn from a multinomial logit with temperature
+    (``generate_nominal``). The utility of each category is a combination of the mean
+    terms with its own coefficients; if no parent acts on the mean, the utilities are
+    random constants, one per category, standardized to unit spread, so the temperature
+    (and therefore the scale parent) alone changes the distribution of the category. The
+    outer transform is not applied to nominal nodes.
+
+    In the linear models the terms are only standardized, not compressed, so that a
+    linear Gaussian node is exactly linear (see ``standardized_term``).
+
+    Parameters
+    ----------
+    rng : Generator
+        Source of randomness.
+
+    data : DataFrame
+        Observations of the variables generated so far, one column per variable.
+
+    parents : list of str
+        Names of the columns of ``data`` that are parents of the node. They may be empty.
+
+    rules : Model
+        Family of structural models the node belongs to.
+
+    target_variable : VariableType
+        Type of the node.
+
+    Returns
+    -------
+    node : Series
+        The node, with the index of ``data``. Ordinal nodes have ordered categories from
+        3 to 5 and nominal nodes unordered categories from 3 to 5.
+
+    Raises
+    ------
+    ValueError
+        If ``target_variable`` is not a ``VariableType``, or if a mean parent has a
+        constant term and therefore cannot affect the node.
+    """
     # Just one scale parent
     scale_parent, mean_parents = split_scale_parent(rng, rules, parents)
 
@@ -503,6 +695,8 @@ def node_generator(
     transform_function = rules.transform_functions.sample(rng)
 
     raw_scale_j = evaluate_scale(data, scale_parent, scale_function)
+    # linear models keep exactly linear terms (see standardized_term)
+    compress = rules.mean_functions is not LinearShapeFactory
     if (
         target_variable == VariableType.CONTINUOUS
         or target_variable == VariableType.ORDINAL
@@ -511,7 +705,10 @@ def node_generator(
         noise_sample = noise_sampler(len(data))
         if mean_parents:
             terms = np.column_stack(
-                [standardized_term(f, data[p]) for p, f in zip(mean_parents, mean_functions)]
+                [
+                    standardized_term(f, data[p], compress)
+                    for p, f in zip(mean_parents, mean_functions)
+                ]
             )
             mean_signal = terms @ mean_coefficients(rng, len(mean_parents))[0]
             signal_variance = float(np.var(mean_signal))
@@ -522,56 +719,29 @@ def node_generator(
             signal_variance = 1.0
         noise_term = noise_std(rng, signal_variance, raw_scale_j) * noise_sample
 
-        # bound before the transform, not after: mean_functions like
-        # exponential_shape/cube_shape are unbounded and can reach into the
-        # thousands, which saturates tanh_transform to exact ties or overflows
-        # exponential_transform to inf (both break discretization's pd.qcut).
-        # OuterTransformFactory's kappa is calibrated for a sane input scale.
-        latent_j = transform_function(standardize_scale(mean_signal + noise_term))
+        # the outer transforms are calibrated for an input of unit variance (see the
+        # kappa ranges in factory.py), so the node value is standardized before them
+        latent_j = transform_function(standardize_variance(mean_signal + noise_term))
         output = latent_to_variable(rng, latent_j, target_variable, data.index)
 
     elif target_variable == VariableType.NOMINAL:
-        # Rescaled to a guaranteed band: the sampled gamma/omega in
-        # HeteroscedasticShapeFactory can otherwise make raw_scale_j barely vary,
-        # making the scale_parent's effect too weak to detect. Collapses to a
-        # constant when there is no scale parent - no spurious effect.
-        raw_scale = rescale_to_band(raw_scale_j, 0.5, 2.5)
         num_categories = categorical_num_terms(rng)
         if mean_parents:
             terms = np.column_stack(
-                [standardized_term(f, data[p]) for p, f in zip(mean_parents, mean_functions)]
+                [
+                    standardized_term(f, data[p], compress)
+                    for p, f in zip(mean_parents, mean_functions)
+                ]
             )
             # one independent linear combination (utility) per category
             mean_signal = terms @ mean_coefficients(rng, len(mean_parents), num_categories).T
-
-            # argmax between categories dilutes the scale_parent's effect much
-            # more than an additive combination does (a real mean_signal usually
-            # already decides the winner); widen the band further here so the
-            # noise has enough amplitude to still compete
-            wide_raw_scale = rescale_to_band(raw_scale, 0.1, 20.0)
-            utilities = np.empty((len(data), num_categories))
-            for k in range(num_categories):
-                # independent noise draw per category: a shared draw correlates
-                # utilities across categories and mostly cancels out in the argmax
-                raw_noise = wide_raw_scale * noise_sampler(len(data))
-                noise_term = adjust_signal_noise_ratio(rng, mean_signal[:, k], raw_noise)
-                # bound before the transform - see the comment on the same
-                # pattern above for why (unbounded mean_functions + saturating
-                # transforms otherwise overflow or tie multiple categories)
-                utilities[:, k] = transform_function(
-                    standardize_scale(mean_signal[:, k] + noise_term)
-                )
-
-            X_j = utilities.argmax(axis=1)
         else:
-            # no real parent drives the mean (the sole parent was picked as
-            # scale_parent): heteroscedastic multinomial logit instead of
-            # argmax-with-shared-noise, which structurally can't transmit a
-            # variance-only dependency (see _no_parent_nominal)
-            X_j = _no_parent_nominal(rng, raw_scale, num_categories)
-
+            base = standardize_variance(np.asarray(mean_term_generator(rng, num_categories)))
+            mean_signal = np.tile(base, (len(data), 1))
+        codes = generate_nominal(rng, mean_signal, raw_scale_j)
         output = pd.Series(
-            pd.Categorical(X_j, categories=range(num_categories), ordered=False), index=data.index
+            pd.Categorical(codes, categories=range(num_categories), ordered=False),
+            index=data.index,
         )
 
     else:
@@ -583,17 +753,42 @@ def node_generator(
 def node_generator_with_no_parents(
     rng: np.random.Generator,
     n: int,
+    rules: Model,
     target_variable: VariableType,
 ) -> pd.Series:
-    # Root node: no parents to condition a mean/scale/transform on, so it's just
-    # the exogenous noise term (standard ANM benchmark convention, e.g. NOTEARS).
+    """Generate a root node as pure exogenous noise, without any function of parents.
+
+    A continuous root is the noise of the model (Gaussian, or Laplace in the linear
+    non-Gaussian model), scaled to a bounded range; a binary or ordinal root is that
+    noise discretized; a nominal root has categories with random probabilities. This
+    is the usual convention for the first variables of an additive-noise benchmark.
+
+    Parameters
+    ----------
+    rng : Generator
+        Source of randomness.
+
+    n : int
+        Number of observations.
+
+    rules : Model
+        Family of structural models; only its noise is used.
+
+    target_variable : VariableType
+        Type of the root.
+
+    Returns
+    -------
+    root : Series of length n
+        The root variable, with a default integer index.
+    """
     if target_variable == VariableType.NOMINAL:
         num_categories = categorical_num_terms(rng)
         probs = rng.dirichlet(np.ones(num_categories))
         X_j = rng.choice(num_categories, size=n, p=probs)
         return pd.Series(pd.Categorical(X_j, categories=range(num_categories), ordered=False))
 
-    noise_sample = GeneralNoiseFactory.sample(rng)(n)
+    noise_sample = rules.noise_functions.sample(rng)(n)
 
     if target_variable == VariableType.CONTINUOUS:
         return pd.Series(standardize_scale(noise_sample))
@@ -612,8 +807,35 @@ def generate_root(
     rules: Model,
     target_variable: VariableType,
 ) -> pd.Series:
+    """Generate a root node, either as pure noise or as a function of two dummy parents.
+
+    With probability 1/2 the root is pure exogenous noise (``node_generator_with_no_parents``).
+    Otherwise it is generated by ``node_generator`` from two independent standard normal
+    variables that are not part of the data, so that the roots too follow the functions
+    (shape, scale and transform) of the model family and are not all plain noise. The
+    distribution of a root is therefore a mixture of the two.
+
+    Parameters
+    ----------
+    rng : Generator
+        Source of randomness.
+
+    n : int
+        Number of observations.
+
+    rules : Model
+        Family of structural models.
+
+    target_variable : VariableType
+        Type of the root.
+
+    Returns
+    -------
+    root : Series of length n
+        The root variable.
+    """
     if rng.random() < 0.5:
-        return node_generator_with_no_parents(rng, n, target_variable)
+        return node_generator_with_no_parents(rng, n, rules, target_variable)
 
     dummy_data = pd.DataFrame(
         {"__dummy_1": rng.standard_normal(n), "__dummy_2": rng.standard_normal(n)}
