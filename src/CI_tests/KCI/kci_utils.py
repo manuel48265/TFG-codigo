@@ -176,6 +176,8 @@ def normalize_unit_variance(data: NDArray[np.float64]) -> NDArray[np.float64]:
     normalized : ndarray of shape (n, d)
         Normalized data.
     """
-    normalized = stats.zscore(data, ddof=1, axis=0)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        normalized = stats.zscore(data, ddof=1, axis=0)
     normalized[np.isnan(normalized)] = 0.0
     return normalized

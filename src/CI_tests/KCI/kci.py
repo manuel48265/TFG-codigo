@@ -340,7 +340,10 @@ class KCI:
         Returns
         -------
         result : CIResult
-            ``statistic`` is the V-statistic. ``p_value`` comes from the Gamma
+            If all the columns of X, or all those of Y, are constant, the
+            variables are trivially independent and the result is
+            ``statistic=0``, ``p_value=1``. Otherwise ``statistic`` is the
+            V-statistic. ``p_value`` comes from the Gamma
             approximation if ``approx`` is True, otherwise it is the fraction
             of the ``nullss`` Monte Carlo draws above the statistic.
         """
@@ -348,6 +351,9 @@ class KCI:
         data_x = x.reshape(n, -1)
         data_y = y.reshape(n, -1)
         data_z = np.empty((n, 0)) if z is None else z.reshape(n, -1)
+
+        if not np.ptp(data_x, axis=0).any() or not np.ptp(data_y, axis=0).any():
+            return CIResult(statistic=0.0, p_value=1.0, reject=False)
 
         Kx, Ky, Kzx, Kzy = self.kernel_matrix(data_x, data_y, data_z)
         test_stat, KxR, KyR = self.KCI_V_statistic(Kx, Ky, Kzx, Kzy)

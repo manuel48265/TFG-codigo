@@ -142,3 +142,20 @@ def test_reject_follows_alpha() -> None:
 
     assert kci_test(df, "x", "y", ["z"], alpha=p_value + 1e-9).reject
     assert not kci_test(df, "x", "y", ["z"], alpha=p_value - 1e-9).reject
+
+
+@pytest.mark.parametrize("constant", ["x", "y"])
+@pytest.mark.parametrize("conditioning", [["z"], []])
+def test_constant_tested_variable_is_independent(constant: str, conditioning: list[str]) -> None:
+    df = _dataframe(1.0).assign(**{constant: 1.0})
+
+    result = kci_test(df, "x", "y", conditioning)
+
+    assert (result.statistic, result.p_value, result.reject) == (0.0, 1.0, False)
+
+
+def test_constant_conditioning_column_is_ignored() -> None:
+    df = _dataframe(1.0).assign(c=1.0)
+
+    assert kci_test(df, "x", "y", ["z", "c"]).reject
+    assert not kci_test(_dataframe(0.0).assign(c=1.0), "x", "y", ["z", "c"]).reject
