@@ -56,19 +56,21 @@ def identity_shape(rng: np.random.Generator) -> ShapeFunction:
 
 
 def sqrt_quadratic_scale(rng: np.random.Generator) -> ShapeFunction:
-    gamma = rng.uniform(0.25, 0.5)
+    gamma = rng.uniform(1 / 25, 1 / 5)
     return lambda u: np.sqrt(1 + gamma * u**2)
 
 
 def periodic_scale(rng: np.random.Generator) -> ShapeFunction:
-    gamma = rng.uniform(0.25, 0.5)
-    omega = rng.uniform(0.5, 1.0)
-    return lambda u: 1 + gamma * (1 + np.sin(omega * u))
+    omega = rng.uniform(1.0, 2.0)
+    return lambda u: 2 + np.sin(omega * u)
 
 
 def piecewise_linear_scale(rng: np.random.Generator) -> ShapeFunction:
-    gamma = rng.uniform(0.25, 0.5)
-    return lambda u: 1 + gamma * np.maximum(0.0, u)
+    return lambda u: 1 + np.maximum(0.0, u)
+
+
+def abs_linear_scale(rng: np.random.Generator) -> ShapeFunction:
+    return lambda u: 1 + abs(u)
 
 
 def unit_scale(rng: np.random.Generator) -> ShapeFunction:
@@ -185,6 +187,7 @@ class HeteroscedasticShapeFactory(FunctionFactory):
         sqrt_quadratic_scale,
         periodic_scale,
         piecewise_linear_scale,
+        abs_linear_scale,
     )
 
 
