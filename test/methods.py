@@ -2,82 +2,88 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
 
-import numpy as np
-from numpy.typing import NDArray
+import pandas as pd
 
-from src.CI_tests.common import CIResult
-from src.CI_tests.Fisher_Z.fisher_z import FisherZ
+from src.CI_tests.common import CIResult, frame_to_arrays
+from src.CI_tests.Fisher_Z.fisher_z import fisher_z_test
 from src.CI_tests.GCM.gcm import GCM
-from src.CI_tests.KCI.kci import KCI
+from src.CI_tests.KCI.kci import KCI, kci_test
+from src.CI_tests.Mixed_CI.mixed_ci import mixed_ci_test
+from src.CI_tests.pearson_chi2.pearson_chi2 import pearson_chi2_test
+from src.Experiments.Experimental_cases.common import (
+    discretize_continuous_columns,
+    to_float_columns,
+)
 from test.CI_tests.Fisher_Z.fisher_z_causallearn_bridge import fisher_z_test_causallearn
 from test.CI_tests.GCM.gcm_r_bridge import gcm_test_r
+from test.CI_tests.GCM.ols_regressor import OLSRegressor
 from test.CI_tests.KCI.kci_causallearn_bridge import kci_test_causallearn
+from test.CI_tests.Mixed_CI.mixed_ci_r_bridge import mixed_ci_test_r
+from test.CI_tests.pearson_chi2.pearson_chi2_causallearn_bridge import (
+    pearson_chi2_test_causallearn,
+)
 
 
 @dataclass
 class RegisteredMethod:
-    """A CI test method plugged into the shared cross-language test battery.
+    """A CI test paired with its reference implementation, for the shared parity battery.
 
-    🇬🇧 Pairs a method's Python port with its reference implementation
-    (R via rpy2 for GCM, causal-learn directly for KCI). `build_kwargs`
-    adapts a scenario's raw (x, y, z) into whatever kwargs this method's
-    own call signature needs (residuals, raw data, extra config...), so
-    every scenario in `SCENARIOS` runs against every method without either
-    side knowing about the other's shape. Adding a method here is all it
-    takes to run it through `test_ci_methods.py`.
+    Attributes
+    ----------
+    name : str
+        Identifier of the method.
 
-    🇪🇸 Empareja el port a Python de un método con su implementación de
-    referencia (R vía rpy2 para GCM, causal-learn directamente para KCI).
-    `build_kwargs` adapta el (x, y, z) crudo de un escenario a los kwargs
-    que necesite la firma propia de este método (residuos, datos crudos,
-    configuración extra...), así todo escenario en `SCENARIOS` corre contra
-    todo método sin que ninguno de los dos lados conozca la forma del otro.
-    Añadir un método aquí es todo lo que hace falta para que pase por
-    `test_ci_methods.py`.
+    python_impl : callable
+        The test under check, with the ``CITest`` signature.
+
+    reference_impl : callable
+        The reference implementation, with the same signature.
+
+    prepare : callable
+        Formatting applied to the DataFrame before both implementations see it,
+        so the method can handle every variable type.
+
+    compare_log_p : bool, optional (default: False)
+        If True, p-values are compared on the log scale (for tiny p-values).
     """
 
     name: str
     python_impl: Callable[..., CIResult]
     reference_impl: Callable[..., CIResult]
-    build_kwargs: Callable[
-        [NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]], dict[str, object]
-    ]
+    prepare: Callable[[pd.DataFrame], pd.DataFrame]
+    compare_log_p: bool = False
 
 
-def _ols_residuals(v: NDArray[np.float64], z: NDArray[np.float64]) -> NDArray[np.float64]:
-    """Closed-form, RNG-free residuals of v on z — decouples the comparison
-    from whichever regressor each side would otherwise default to."""
-    z_design = np.column_stack([np.ones(z.shape[0]), z])
-    coef, *_ = np.linalg.lstsq(z_design, v, rcond=None)
-    return v - z_design @ coef
+def _frame_test(array_test: Callable[..., CIResult]) -> Callable[..., CIResult]:
+    """Adapt a test taking ``(x, y, z, alpha)`` arrays to the DataFrame signature."""
 
+    def run(
+        data: pd.DataFrame, x: str, y: str, z: list[str] | None = None, alpha: float = 0.05
+    ) -> CIResult:
+        return array_test(*frame_to_arrays(data, x, y, z), alpha)
 
-def _gcm_kwargs(
-    x: NDArray[np.float64], y: NDArray[np.float64], z: NDArray[np.float64]
-) -> dict[str, object]:
-    return {"resid_x_on_z": _ols_residuals(x, z), "resid_y_on_z": _ols_residuals(y, z)}
-
-
-def _kci_kwargs(
-    x: NDArray[np.float64], y: NDArray[np.float64], z: NDArray[np.float64]
-) -> dict[str, object]:
-    return {"x": x.reshape(-1, 1), "y": y.reshape(-1, 1), "z": z}
-
-
-def _fisher_z_kwargs(
-    x: NDArray[np.float64], y: NDArray[np.float64], z: NDArray[np.float64]
-) -> dict[str, object]:
-    return {"x": x, "y": y, "z": z}
+    return run
 
 
 METHODS = [
-    RegisteredMethod("gcm", GCM().test_from_residuals, gcm_test_r, _gcm_kwargs),
-    RegisteredMethod("kci", KCI().test, kci_test_causallearn, _kci_kwargs),
+    RegisteredMethod(
+        "gcm", _frame_test(GCM(estimator=OLSRegressor()).test), gcm_test_r, to_float_columns
+    ),
+    RegisteredMethod("kci", kci_test, kci_test_causallearn, to_float_columns),
     RegisteredMethod(
         "kci_bootstrap",
-        KCI(approx=False).test,
+        _frame_test(KCI(approx=False).test),
         partial(kci_test_causallearn, approx=False),
-        _kci_kwargs,
+        to_float_columns,
     ),
-    RegisteredMethod("fisher_z", FisherZ().test, fisher_z_test_causallearn, _fisher_z_kwargs),
+    RegisteredMethod("fisher_z", fisher_z_test, fisher_z_test_causallearn, to_float_columns),
+    RegisteredMethod(
+        "pearson_chi2",
+        pearson_chi2_test,
+        pearson_chi2_test_causallearn,
+        discretize_continuous_columns,
+    ),
+    RegisteredMethod(
+        "mixed_ci", mixed_ci_test, mixed_ci_test_r, lambda data: data, compare_log_p=True
+    ),
 ]
