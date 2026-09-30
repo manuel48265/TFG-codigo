@@ -38,10 +38,29 @@ It's independent from `~/Escritorio/TFG/codigo` (where the literature review liv
   after a fresh clone, run `git config core.hooksPath .githooks` once to
   activate it.
 - Code language (the TFG itself is written in Spanish): identifiers
-  (functions/variables) and inline comments in **English** — standard for
-  this ecosystem (numpy/sklearn/xgboost/etc.) and avoids mixing languages
-  inside a single name. Docstrings (function/parameter descriptions) are
-  **bilingual: English then Spanish**.
+  (functions/variables), inline comments and docstrings (function/parameter
+  descriptions) are all **English only** — standard for this ecosystem
+  (numpy/sklearn/xgboost/etc.) and avoids mixing languages. Existing
+  bilingual docstrings are being migrated to English-only as part of the
+  documentation refactor; don't add new Spanish text to code.
+- Docstring format (numpydoc, same style as tigramite): every public class
+  and function that is part of the library (CI tests, generators, experiment
+  helpers) gets one. Private helpers only if non-obvious. Layout:
+  1. One-line summary in the imperative mood ("Return the ...").
+  2. Optional short paragraph on what it computes, with the formula source
+     cited (paper + equation) when it implements one.
+  3. `Parameters` section: `name : type, optional (default: value)` and an
+     indented description. State the array shape, units/scale, the accepted
+     values for enums/strings (`{'a', 'b'}`), and what `None` means.
+  4. `Returns` section: `name : type` plus a description; for tuples, one
+     entry per element. Add `Raises` only for exceptions the caller must
+     handle.
+  For a class, document the constructor parameters in the class docstring
+  (as tigramite does), not in `__init__`.
+  Content rules: describe behavior only. No design rationale, no comparisons
+  with other libraries, no "verified/benchmarked against X", no references to
+  another function's docstring. The parameter list is the important part.
+  Unimplemented stubs get no docstring.
 
 ## General working rules
 
