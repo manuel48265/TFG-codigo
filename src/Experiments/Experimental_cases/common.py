@@ -69,6 +69,51 @@ def to_float_columns(data: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def remove_unused_categories(data: pd.DataFrame) -> pd.DataFrame:
+    """Return a copy of ``data`` without the unobserved categories of its ``category`` columns.
+
+    Mixed-CI raises an error for a ``category`` column with categories that have no
+    observations, so the data are cleaned with this function before running it. Columns
+    that are not categorical are left unchanged.
+
+    Parameters
+    ----------
+    data : DataFrame
+        Observations in rows, variables in columns.
+
+    Returns
+    -------
+    cleaned : DataFrame
+        Same columns and index as ``data``.
+    """
+    return data.apply(
+        lambda column: (
+            column.cat.remove_unused_categories()
+            if isinstance(column.dtype, pd.CategoricalDtype)
+            else column
+        )
+    )
+
+
+def has_constant_column(data: pd.DataFrame) -> bool:
+    """Return whether some column of ``data`` has a single distinct value.
+
+    A constant variable carries no information, and a CI test on it is degenerate, so a
+    dataset with one is discarded and generated again with another seed.
+
+    Parameters
+    ----------
+    data : DataFrame
+        Observations in rows, variables in columns.
+
+    Returns
+    -------
+    constant : bool
+        True if at least one column takes a single value.
+    """
+    return bool((data.nunique() <= 1).any())
+
+
 def classify_structure(marginal_reject: bool, conditional_reject: bool) -> FundamentalCase:
     if not marginal_reject and not conditional_reject:
         return FundamentalCase.INDEPENDENCE

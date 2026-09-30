@@ -12,6 +12,8 @@ from src.Experiments.Experimental_cases.common import (
     classify_structure,
     discretize_continuous_columns,
     discretize_for_chi2,
+    has_constant_column,
+    remove_unused_categories,
     to_float_columns,
 )
 
@@ -62,6 +64,31 @@ def test_to_float_columns_encodes_categories_and_casts_the_rest() -> None:
     assert result["binary"].tolist() == [0.0, 1.0, 1.0]
     assert result["nominal"].tolist() == [1.0, 0.0, 2.0]
     assert result["text"].tolist() == [1.0, 0.0, 1.0]
+
+
+def test_remove_unused_categories_only_touches_categorical_columns() -> None:
+    df = pd.DataFrame(
+        {
+            "nominal": pd.Categorical(["a", "b", "a"], categories=["a", "b", "c"]),
+            "number": [1.0, 2.0, 3.0],
+        }
+    )
+
+    result = remove_unused_categories(df)
+
+    assert list(result["nominal"].cat.categories) == ["a", "b"]
+    pd.testing.assert_series_equal(result["number"], df["number"])
+    assert result["nominal"].tolist() == df["nominal"].tolist()
+
+
+def test_has_constant_column_detects_a_single_valued_column_of_any_type() -> None:
+    varied = pd.DataFrame({"a": [1.0, 2.0, 3.0], "b": pd.Categorical(["x", "y", "x"])})
+
+    assert not has_constant_column(varied)
+    assert has_constant_column(varied.assign(c=1.0))
+    assert has_constant_column(
+        varied.assign(c=pd.Categorical(["x", "x", "x"], categories=["x", "y"]))
+    )
 
 
 @pytest.mark.parametrize(

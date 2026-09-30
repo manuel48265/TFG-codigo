@@ -12,6 +12,7 @@ from src.CI_tests.Mixed_CI.mixed_ci import mixed_ci_test
 from src.CI_tests.pearson_chi2.pearson_chi2 import pearson_chi2_test
 from src.Experiments.Experimental_cases.common import (
     discretize_continuous_columns,
+    remove_unused_categories,
     to_float_columns,
 )
 from test.CI_tests.Fisher_Z.fisher_z_causallearn_bridge import fisher_z_test_causallearn
@@ -84,6 +85,6 @@ METHODS = [
         discretize_continuous_columns,
     ),
     RegisteredMethod(
-        "mixed_ci", mixed_ci_test, mixed_ci_test_r, lambda data: data, compare_log_p=True
+        "mixed_ci", mixed_ci_test, mixed_ci_test_r, remove_unused_categories, compare_log_p=True
     ),
 ]
