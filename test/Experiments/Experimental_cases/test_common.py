@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from src.CI_tests.common import CIResult
@@ -9,7 +10,9 @@ from src.Experiments.Experimental_cases.common import (
     append_trial_result,
     build_trial_result,
     classify_structure,
+    discretize_continuous_columns,
     discretize_for_chi2,
+    to_float_columns,
 )
 
 
@@ -22,6 +25,43 @@ def test_discretize_for_chi2_gives_equiprobable_bins() -> None:
     assert bins.max() == 4
     counts = np.bincount(bins)
     assert counts.min() > 150  # ~200/bin expected; equiprobable, not skewed
+
+
+def test_discretize_continuous_columns_only_touches_float_columns() -> None:
+    rng = np.random.default_rng(1)
+    n = 500
+    df = pd.DataFrame(
+        {
+            "continuous": rng.standard_normal(n),
+            "binary": rng.integers(0, 2, n),
+            "nominal": pd.Categorical(rng.choice(["a", "b", "c"], n)),
+        }
+    )
+
+    result = discretize_continuous_columns(df)
+
+    assert sorted(result["continuous"].unique()) == [0, 1, 2, 3, 4]
+    pd.testing.assert_series_equal(result["binary"], df["binary"])
+    pd.testing.assert_series_equal(result["nominal"], df["nominal"])
+    assert result.index.equals(df.index)
+
+
+def test_to_float_columns_encodes_categories_and_casts_the_rest() -> None:
+    df = pd.DataFrame(
+        {
+            "continuous": [0.5, 1.5, 2.5],
+            "binary": [0, 1, 1],
+            "nominal": pd.Categorical(["b", "a", "c"]),
+            "text": ["y", "x", "y"],
+        }
+    )
+
+    result = to_float_columns(df)
+
+    assert (result.dtypes == np.float64).all()
+    assert result["binary"].tolist() == [0.0, 1.0, 1.0]
+    assert result["nominal"].tolist() == [1.0, 0.0, 2.0]
+    assert result["text"].tolist() == [1.0, 0.0, 1.0]
 
 
 @pytest.mark.parametrize(
