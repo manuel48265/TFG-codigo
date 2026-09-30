@@ -57,10 +57,12 @@ It's independent from `~/Escritorio/TFG/codigo` (where the literature review liv
      handle.
   For a class, document the constructor parameters in the class docstring
   (as tigramite does), not in `__init__`.
-  Content rules: describe behavior only. No design rationale, no comparisons
-  with other libraries, no "verified/benchmarked against X", no references to
-  another function's docstring. The parameter list is the important part.
-  Unimplemented stubs get no docstring.
+  Content rules: state what the function does and, when it isn't obvious, why
+  it exists: the purpose it serves and the problem it avoids, in self-contained
+  terms. Never appeal to the development conversation or to past decisions ("as
+  discussed", "as requested"), and never write "verified/benchmarked against X",
+  compare with other libraries, or refer to another function's docstring. The
+  parameter list is the important part. Unimplemented stubs get no docstring.
 
 ## General working rules
 
