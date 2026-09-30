@@ -7,7 +7,7 @@ import pandas as pd
 from numpy.typing import NDArray
 from scipy.stats import norm
 
-from src.CI_tests.common import CIResult, ci_test, col, n_cols
+from src.CI_tests.common import CIResult, ci_test, col, frame_to_arrays, n_cols
 
 
 class FisherZ:
@@ -114,7 +114,5 @@ def fisher_z_test(
         ``statistic`` is the Fisher Z statistic, ``p_value`` the two-sided
         p-value under N(0, 1) and ``reject`` the decision at level ``alpha``.
     """
-    z_values = data[z].to_numpy(dtype=np.float64) if z else None
-    return FisherZ().test(
-        data[x].to_numpy(dtype=np.float64), data[y].to_numpy(dtype=np.float64), z_values, alpha
-    )
+    x_values, y_values, z_values = frame_to_arrays(data, x, y, z)
+    return FisherZ().test(x_values, y_values, z_values, alpha)

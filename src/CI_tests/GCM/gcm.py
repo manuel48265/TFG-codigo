@@ -9,7 +9,7 @@ from numpy.typing import NDArray
 from scipy.stats import norm
 from xgboost import XGBRegressor
 
-from src.CI_tests.common import CIResult, ci_test, col, n_cols
+from src.CI_tests.common import CIResult, ci_test, col, frame_to_arrays, n_cols
 from src.CI_tests.GCM.gcm_utils import Regressor, compute_residuals
 
 
@@ -189,7 +189,5 @@ def gcm_test(
         ``statistic`` is the GCM statistic, ``p_value`` the two-sided normal
         p-value and ``reject`` the decision at level ``alpha``.
     """
-    z_values = data[z].to_numpy(dtype=np.float64) if z else None
-    return GCM().test(
-        data[x].to_numpy(dtype=np.float64), data[y].to_numpy(dtype=np.float64), z_values, alpha
-    )
+    x_values, y_values, z_values = frame_to_arrays(data, x, y, z)
+    return GCM().test(x_values, y_values, z_values, alpha)

@@ -33,6 +33,45 @@ def col(a: NDArray[np.float64], j: int) -> NDArray[np.float64]:
     return a if a.ndim == 1 else a[:, j]
 
 
+def frame_to_arrays(
+    data: pd.DataFrame, x: str, y: str, z: list[str] | None
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64] | None]:
+    """Select the tested and conditioning columns of a DataFrame as float arrays.
+
+    Parameters
+    ----------
+    data : DataFrame
+        Observations in rows, numeric variables in columns.
+
+    x : str
+        Name of the first tested column.
+
+    y : str
+        Name of the second tested column.
+
+    z : list of str or None
+        Names of the conditioning columns. If None or empty, ``z_values`` is None.
+
+    Returns
+    -------
+    x_values : ndarray of shape (n,)
+        Sample of X.
+
+    y_values : ndarray of shape (n,)
+        Sample of Y.
+
+    z_values : ndarray of shape (n, d_z) or None
+        Sample of the conditioning set.
+
+    Raises
+    ------
+    ValueError
+        If a selected column cannot be converted to float.
+    """
+    z_values = data[z].to_numpy(dtype=np.float64) if z else None
+    return data[x].to_numpy(dtype=np.float64), data[y].to_numpy(dtype=np.float64), z_values
+
+
 class CITest(Protocol):
     """Common signature of a conditional independence test on a DataFrame.
 

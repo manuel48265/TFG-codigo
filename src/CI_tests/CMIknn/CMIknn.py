@@ -13,7 +13,7 @@ import pandas as pd
 from numpy.typing import NDArray
 from scipy import spatial, special, stats
 
-from src.CI_tests.common import CIResult, ci_test
+from src.CI_tests.common import CIResult, ci_test, frame_to_arrays
 
 
 class CMIknn:
@@ -336,7 +336,5 @@ def cmiknn_test(
         ``statistic`` is the estimated CMI, ``p_value`` the permutation
         p-value and ``reject`` the decision at level ``alpha``.
     """
-    z_values = data[z].to_numpy(dtype=np.float64) if z else None
-    return CMIknn(**kwargs).test(  # type: ignore[arg-type]
-        data[x].to_numpy(dtype=np.float64), data[y].to_numpy(dtype=np.float64), z_values, alpha
-    )
+    x_values, y_values, z_values = frame_to_arrays(data, x, y, z)
+    return CMIknn(**kwargs).test(x_values, y_values, z_values, alpha)  # type: ignore[arg-type]
