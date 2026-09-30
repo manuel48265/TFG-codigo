@@ -20,6 +20,7 @@ weakness of the generated effects:
   non-Gaussian model, where it is Laplace.
 """
 
+from dataclasses import dataclass
 from typing import Literal
 
 import numpy as np
@@ -657,14 +658,37 @@ def evaluate_scale(
     return apply_function(scale_function, parent)
 
 
-def node_generator(
+@dataclass(frozen=True)
+class GeneratedNode:
+    """A generated node and the role each of its parents plays.
+
+    Attributes
+    ----------
+    values : Series
+        Observations of the node.
+
+    mean_parents : list of str
+        Parents that act on the mean of the node.
+
+    scale_parent : str or None
+        Parent that acts on the scale of the noise, or None if there is none. An edge
+        from it has an effect on the variance (or, for a nominal node, on the
+        temperature) and not on the mean.
+    """
+
+    values: pd.Series
+    mean_parents: list[str]
+    scale_parent: str | None
+
+
+def generate_node(
     rng: np.random.Generator,
     data: pd.DataFrame,
     parents: list[str],
     rules: Model,
     target_variable: VariableType,
-) -> pd.Series:
-    """Generate a node from its parents.
+) -> GeneratedNode:
+    """Generate a node from its parents and report the role of each of them.
 
     In a model with heteroscedastic noise, one parent chosen at random acts only on the
     scale of the noise and the others act on the mean (``split_scale_parent``).
@@ -709,9 +733,12 @@ def node_generator(
 
     Returns
     -------
-    node : Series
-        The node, with the index of ``data``. Ordinal nodes have ordered categories from
-        3 to 5 and nominal nodes unordered categories from 3 to 5.
+    node : GeneratedNode
+        ``values`` is the node, with the index of ``data``; ordinal nodes have ordered
+        categories from 3 to 5 and nominal nodes unordered categories from 3 to 5.
+        ``mean_parents`` are the parents that act on the mean and ``scale_parent`` the
+        one that acts on the scale of the noise, or None if there is none (homoscedastic
+        models, or a node without parents).
 
     Raises
     ------
@@ -781,7 +808,18 @@ def node_generator(
     else:
         raise ValueError(f"Unexpected target_variable: {target_variable}")
 
-    return output
+    return GeneratedNode(output, mean_parents, scale_parent)
+
+
+def node_generator(
+    rng: np.random.Generator,
+    data: pd.DataFrame,
+    parents: list[str],
+    rules: Model,
+    target_variable: VariableType,
+) -> pd.Series:
+    """Generate a node from its parents and return only its values (see ``generate_node``)."""
+    return generate_node(rng, data, parents, rules, target_variable).values
 
 
 def node_generator_with_no_parents(

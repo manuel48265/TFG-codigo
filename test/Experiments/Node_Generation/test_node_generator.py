@@ -27,6 +27,7 @@ from src.Experiments.Node_Generation.node_generator import (
     discretization,
     draw_function,
     evaluate_scale,
+    generate_node,
     generate_nominal,
     generate_root,
     get_mean_functions,
@@ -781,3 +782,44 @@ def test_discretization_never_leaves_a_class_rarer_than_the_minimum(num_bins: in
 
     assert len(np.unique(codes)) == num_bins
     assert min(smallest) >= MIN_CLASS_SHARE - 0.02  # the rest is sampling of the quantiles
+
+
+@pytest.mark.parametrize("target", list(VariableType))
+def test_generate_node_reports_which_parent_acts_on_the_scale(target: VariableType) -> None:
+    n = 200
+    for seed in range(20):
+        rng = np.random.default_rng(seed)
+        data = pd.DataFrame({f"p{j}": standardize_scale(rng.standard_normal(n)) for j in range(3)})
+
+        node = generate_node(rng, data, list(data.columns), LOCAL_SCALE_NOISE_MODELS, target)
+
+        assert node.scale_parent is not None
+        assert node.scale_parent in data.columns
+        assert sorted([node.scale_parent, *node.mean_parents]) == sorted(data.columns)
+        assert node.values.index.equals(data.index)
+
+
+def test_generate_node_has_no_scale_parent_in_a_homoscedastic_model_or_without_parents() -> None:
+    rng = np.random.default_rng(0)
+    data = pd.DataFrame({"a": rng.standard_normal(100), "b": rng.standard_normal(100)})
+
+    homoscedastic = generate_node(rng, data, ["a", "b"], LINEAR_GAUSSIAN, VariableType.CONTINUOUS)
+    no_parents = generate_node(rng, data, [], LOCAL_SCALE_NOISE_MODELS, VariableType.CONTINUOUS)
+
+    assert homoscedastic.scale_parent is None
+    assert homoscedastic.mean_parents == ["a", "b"]
+    assert no_parents.scale_parent is None
+    assert no_parents.mean_parents == []
+
+
+def test_node_generator_returns_the_values_of_generate_node() -> None:
+    data = pd.DataFrame({"a": np.random.default_rng(1).standard_normal(50)})
+
+    values = node_generator(
+        np.random.default_rng(2), data, ["a"], LINEAR_GAUSSIAN, VariableType.CONTINUOUS
+    )
+    node = generate_node(
+        np.random.default_rng(2), data, ["a"], LINEAR_GAUSSIAN, VariableType.CONTINUOUS
+    )
+
+    assert values.equals(node.values)

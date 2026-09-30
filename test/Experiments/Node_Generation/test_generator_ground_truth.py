@@ -27,6 +27,7 @@ from src.Experiments.Node_Generation.causal_models import (
 from src.Experiments.Node_Generation.node_generator import (
     MAX_TARGET_R2,
     MIN_TARGET_R2,
+    generate_node,
     node_generator,
 )
 from src.Experiments.Node_Generation.utils import VariableType, standardize_scale
@@ -218,3 +219,30 @@ def test_an_ordinal_node_is_monotonically_related_to_its_parent() -> None:
         correlations.append(abs(stats.spearmanr(parent, child.cat.codes)[0]))
 
     assert min(correlations) > 0.3
+
+
+def test_the_roles_tell_which_parent_acts_on_the_mean_and_which_on_the_scale() -> None:
+    """A node with two parents in a linear heteroscedastic model: the mean parent moves the
+    mean of the node and the scale parent moves the size of its noise, never the reverse.
+    """
+    n, repetitions = 400, 25
+    scale_on_size = mean_on_size = mean_on_mean = 0
+    for seed in range(repetitions):
+        rng = np.random.default_rng(seed)
+        data = pd.DataFrame({"a": _root(rng, n), "b": _root(rng, n)})
+        node = generate_node(rng, data, ["a", "b"], _LINEAR_HETEROSCEDASTIC, CONTINUOUS)
+        assert node.scale_parent is not None
+        (mean_parent,) = node.mean_parents
+        scale = data[node.scale_parent].to_numpy(dtype=np.float64)
+        mean = data[mean_parent].to_numpy(dtype=np.float64)
+        child = node.values.to_numpy(dtype=np.float64)
+
+        slope, intercept = np.polyfit(mean, child, 1)
+        size = np.abs(child - slope * mean - intercept)
+        scale_on_size += KCI().test(scale, size).reject
+        mean_on_size += KCI().test(mean, size).reject
+        mean_on_mean += FisherZ().test(mean, child, scale.reshape(-1, 1)).reject
+
+    assert scale_on_size / repetitions >= 0.9
+    assert mean_on_size / repetitions <= ALPHA_TOLERANCE
+    assert mean_on_mean / repetitions >= 0.9
