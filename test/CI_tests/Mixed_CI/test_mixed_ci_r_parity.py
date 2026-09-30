@@ -1,4 +1,4 @@
-"""Parity tests: `MixedCI.mixed_ci_test` (Python) vs `MXM::ci.mm` (R), one
+"""Parity tests: `MixedCI.test` (Python) vs `MXM::ci.mm` (R), one
 scenario per outcome type (continuous/binary/nominal/ordinal), each with a
 dependent and an independent case.
 """
@@ -76,7 +76,7 @@ SCENARIOS = [
 @pytest.mark.parametrize("scenario", SCENARIOS, ids=lambda s: s.name)
 def test_python_matches_r_reference(scenario: MixedScenario, seed: int) -> None:
     """Every scenario's reject decision must match R, across `N_SEEDS` draws
-    each — not just one, since mixed_ci_test has no internal randomness of
+    each — not just one, since MixedCI.test has no internal randomness of
     its own (unlike CMIknn's shuffle test) so there's no obstacle to
     requiring agreement on more than a single lucky/unlucky seed. p-value
     must match too when the two sides use the same underlying model
@@ -84,7 +84,7 @@ def test_python_matches_r_reference(scenario: MixedScenario, seed: int) -> None:
     """
     df = scenario.build(np.random.default_rng(seed))
 
-    py = MixedCI().mixed_ci_test(df, "x", "y", ["z"])
+    py = MixedCI().test(df, "x", "y", ["z"])
     ref = mixed_ci_test_r(df, "x", "y", ["z"])
 
     assert py.reject == ref.reject
