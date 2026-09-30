@@ -20,6 +20,7 @@ from src.Experiments.Node_Generation.causal_models import (
 from src.Experiments.Node_Generation.factory import NonLinearShapeFactory
 from src.Experiments.Node_Generation.node_generator import (
     MAX_TARGET_R2,
+    MIN_CLASS_SHARE,
     MIN_PARENT_SHARE,
     MIN_TARGET_R2,
     compress_and_standardize,
@@ -39,6 +40,7 @@ from src.Experiments.Node_Generation.node_generator import (
     noise_std_bounds,
     r2_to_position,
     scale_position,
+    shares_with_minimum,
     standardized_term,
 )
 from src.Experiments.Node_Generation.utils import (
@@ -756,3 +758,26 @@ def test_a_single_parent_never_gets_identical_coefficients_for_all_categories(
         coefficients = mean_coefficients(np.random.default_rng(seed), 1, n_outputs)
 
         assert coefficients.min() < 0.0 < coefficients.max()
+
+
+@pytest.mark.parametrize("n_parts", range(1, 13))
+def test_shares_with_minimum_sum_to_one_and_respect_the_minimum(n_parts: int) -> None:
+    shares = shares_with_minimum(np.random.default_rng(n_parts), n_parts, n_rows=300, minimum=0.1)
+
+    assert shares.shape == (300, n_parts)
+    assert shares.sum(axis=1) == pytest.approx(np.ones(300))
+    assert shares.min() >= min(0.1, 1 / n_parts) - 1e-12
+
+
+@pytest.mark.parametrize("num_bins", [2, 3, 4, 5])
+def test_discretization_never_leaves_a_class_rarer_than_the_minimum(num_bins: int) -> None:
+    n = 300
+    smallest = []
+    for seed in range(300):
+        rng = np.random.default_rng(seed)
+        codes = discretization(rng, num_bins, rng.standard_normal(n))
+        counts = np.bincount(codes, minlength=num_bins) / n
+        smallest.append(counts.min())
+
+    assert len(np.unique(codes)) == num_bins
+    assert min(smallest) >= MIN_CLASS_SHARE - 0.02  # the rest is sampling of the quantiles

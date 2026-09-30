@@ -279,16 +279,53 @@ def generate_nominal(
     return (logits + rng.gumbel(size=logits.shape)).argmax(axis=1)
 
 
+# Smallest share of the observations that each class of a binary or ordinal node holds.
+# A class rarer than this is hard to tell apart from noise by a CI test.
+MIN_CLASS_SHARE = 0.10
+
+
+def shares_with_minimum(
+    rng: np.random.Generator, n_parts: int, n_rows: int = 1, minimum: float = 0.10
+) -> NDArray[np.float64]:
+    """Draw random shares that sum to 1 and are all at least ``min(minimum, 1 / n_parts)``.
+
+    The shares are ``floor + (1 - n_parts * floor) * D``, with ``D`` uniform over the
+    simplex (a Dirichlet with all parameters 1), so the rest, once every part has its
+    minimum, is split uniformly at random. The bound ``1 / n_parts`` keeps the minimum
+    feasible when there are more than ``1 / minimum`` parts, where it forces equal shares.
+
+    Parameters
+    ----------
+    rng : Generator
+        Source of randomness.
+
+    n_parts : int
+        Number of shares in each row.
+
+    n_rows : int, optional (default: 1)
+        Number of independent rows to draw.
+
+    minimum : float, optional (default: 0.1)
+        Smallest share of each part.
+
+    Returns
+    -------
+    shares : ndarray of shape (n_rows, n_parts)
+        Each row sums to 1.
+    """
+    floor = min(minimum, 1.0 / n_parts)
+    free = 1.0 - n_parts * floor
+    return floor + free * rng.dirichlet(np.ones(n_parts), size=n_rows)
+
+
 def discretization(
     rng: np.random.Generator, num_bins: int, latent_j: NDArray[np.float64]
 ) -> NDArray[np.intp]:
-    """Split a continuous variable into ordered classes at random quantiles.
+    """Split a continuous variable into ordered classes with random sizes.
 
-    The cut levels are drawn uniformly, so the classes have random sizes; the codes
-    follow the order of the variable.
-
-    TODO: the classes can be very small (and, rarely, empty). A minimum share per class,
-    like the one of the parents of a node, would avoid classes too rare to be detected.
+    The share of observations of each class is drawn at random, at least
+    ``MIN_CLASS_SHARE`` (see ``shares_with_minimum``), and the cuts are the cumulative
+    shares, taken as quantiles of the variable. The codes follow its order.
 
     Parameters
     ----------
@@ -306,10 +343,9 @@ def discretization(
     codes : ndarray of shape (n,)
         Class of each observation, from 0 to ``num_bins - 1``.
     """
-    cuts = np.sort(rng.uniform(0, 1, size=num_bins - 1))
-    quantile_levels = np.concatenate(([0.0], cuts, [1.0]))
-    X_j = pd.qcut(latent_j, q=quantile_levels, labels=False)
-    return X_j
+    shares = shares_with_minimum(rng, num_bins, minimum=MIN_CLASS_SHARE)[0]
+    quantile_levels = np.concatenate(([0.0], np.cumsum(shares)[:-1], [1.0]))
+    return pd.qcut(latent_j, q=quantile_levels, labels=False)
 
 
 # Gain of the compression of ``standardized_term``: how many robust scales a value
@@ -445,9 +481,7 @@ def mean_coefficients(
     coefficients : ndarray of shape (n_outputs, n_parents)
         Signed coefficients.
     """
-    floor = min(MIN_PARENT_SHARE, 1.0 / n_parents)
-    free = 1.0 - n_parents * floor
-    shares = floor + free * rng.dirichlet(np.ones(n_parents), size=n_outputs)
+    shares = shares_with_minimum(rng, n_parents, n_outputs, MIN_PARENT_SHARE)
     signs = rng.choice((-1.0, 1.0), size=shares.shape)
     if n_parents == 1 and n_outputs > 1 and (signs == signs[0, 0]).all():
         signs[rng.integers(n_outputs), 0] *= -1.0
