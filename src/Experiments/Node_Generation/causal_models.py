@@ -16,6 +16,33 @@ from src.Experiments.Node_Generation.factory import (
 
 
 class Model:
+    """Set of factories that defines a family of structural causal models.
+
+    Each node of a generated graph draws its mean, scale, transform and noise
+    from these factories, so the family fixes what kind of functional
+    dependence and noise the data can have.
+
+    Parameters
+    ----------
+    mean_functions : type of FunctionFactory
+        Factory of the mean function of the continuous parents.
+
+    categorical_mean_functions : type of CategoricalFactory
+        Factory of the mean contribution of the categorical parents.
+
+    scale_functions : type of FunctionFactory
+        Factory of the standard-deviation function of the continuous parents.
+
+    categorical_scale_function : type of CategoricalFactory
+        Factory of the standard-deviation factor of the categorical parents.
+
+    transform_functions : type of FunctionFactory
+        Factory of the outer transform applied to the noisy mean.
+
+    noise_functions : type of NoiseFactory
+        Factory of the noise sampler.
+    """
+
     mean_functions: type[FunctionFactory]
     categorical_mean_functions: type[CategoricalFactory]
     scale_functions: type[FunctionFactory]
@@ -40,6 +67,8 @@ class Model:
         self.noise_functions = noise_functions
 
 
+# Model families: linear Gaussian, linear non-Gaussian, additive noise (nonlinear mean),
+# post-nonlinear (outer transform) and local scale (heteroscedastic noise).
 LINEAR_GAUSSIAN = Model(
     LinearShapeFactory,
     CategoricalVariablesMeanFactory,

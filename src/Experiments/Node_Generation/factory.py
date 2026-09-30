@@ -8,9 +8,13 @@ ShapeFunction = Callable[[NDArray[np.float64]], NDArray[np.float64]]
 NoiseSampler = Callable[[int], NDArray[np.float64]]
 CategoricalFunction = Callable[[NDArray[np.int64]], NDArray[np.float64]]
 
-## FUNTIONS ##
+# Every builder below takes a random generator, draws the parameters of one member
+# of its family from it, and returns the resulting function (or sampler). The
+# families are the "shape" of the mean, the "scale" of the standard deviation, the
+# outer "transform" and the "noise" of the node generator.
 
 ## Shape ##
+# Mean functions u -> f(u); the linear case is the identity.
 
 
 def sine_shape(rng: np.random.Generator) -> ShapeFunction:
@@ -48,6 +52,7 @@ def identity_shape(rng: np.random.Generator) -> ShapeFunction:
 
 
 ## Scale ##
+# Standard-deviation functions u -> s(u) > 0; the unit scale is homoscedastic.
 
 
 def sqrt_quadratic_scale(rng: np.random.Generator) -> ShapeFunction:
@@ -71,6 +76,7 @@ def unit_scale(rng: np.random.Generator) -> ShapeFunction:
 
 
 ## Transform ##
+# Outer transforms t -> g(t) applied to the noisy mean (post-nonlinear models).
 
 
 def identity_transform(rng: np.random.Generator) -> ShapeFunction:
@@ -93,6 +99,7 @@ def exponential_transform(rng: np.random.Generator) -> ShapeFunction:
 
 
 ## Noise ##
+# Samplers n -> n draws of zero-mean, unit-variance noise.
 
 
 def gaussian_noise(rng: np.random.Generator) -> NoiseSampler:
@@ -120,27 +127,34 @@ P = ParamSpec("P")
 
 
 class BaseFactory(Generic[P, R]):
+    """Draw one builder uniformly from ``_BUILDERS`` and call it.
+
+    Subclasses only set ``_BUILDERS``, the tuple of builders they choose from.
+    """
+
     _BUILDERS: tuple[Callable[Concatenate[np.random.Generator, P], R], ...] = ()
 
     @classmethod
     def sample(cls, rng: np.random.Generator, *args: P.args, **kwargs: P.kwargs) -> R:
+        """Return ``builder(rng, ...)`` for a builder chosen uniformly at random."""
         builder = cls._BUILDERS[rng.integers(len(cls._BUILDERS))]
         return builder(rng, *args, **kwargs)
 
 
 class FunctionFactory(BaseFactory[[], ShapeFunction]):
-    pass
+    """Factory of functions of a continuous argument (shape, scale and transform)."""
 
 
 class NoiseFactory(BaseFactory[[], NoiseSampler]):
-    pass
+    """Factory of noise samplers."""
 
 
 class CategoricalFactory(BaseFactory[[int], CategoricalFunction]):
-    pass
+    """Factory of functions of a categorical code; ``sample`` takes the number of categories."""
 
 
-# Mean Function Cases
+# Mean function cases: linear (identity) or nonlinear (sine, cosine, exponential,
+# square, cube, tanh).
 
 
 class LinearShapeFactory(FunctionFactory):
@@ -158,7 +172,8 @@ class NonLinearShapeFactory(FunctionFactory):
     )
 
 
-# Scale Function Cases
+# Scale function cases: homoscedastic (unit scale) or heteroscedastic (the scale
+# depends on the argument).
 
 
 class HomoscedasticShapeFactory(FunctionFactory):
@@ -173,7 +188,7 @@ class HeteroscedasticShapeFactory(FunctionFactory):
     )
 
 
-# Transform Function Cases
+# Transform cases: identity or an outer nonlinear transform (tanh, asinh, exp).
 
 
 class IdentityTransformFactory(FunctionFactory):
@@ -188,7 +203,7 @@ class OuterTransformFactory(FunctionFactory):
     )
 
 
-# Noise samplers
+# Noise cases: Gaussian, non-Gaussian (Laplace) or any of the four samplers.
 
 
 class GaussianNoiseFactory(NoiseFactory):
@@ -203,7 +218,8 @@ class GeneralNoiseFactory(NoiseFactory):
     _BUILDERS = (gaussian_noise, laplace_noise, exponential_noise, gumbel_noise)
 
 
-# Nominal variables
+# Nominal variables: the mean and the scale are lookup tables indexed by the
+# category code, drawn once per variable.
 
 
 def categorical_mean_function(rng: np.random.Generator, n_categories: int) -> CategoricalFunction:
