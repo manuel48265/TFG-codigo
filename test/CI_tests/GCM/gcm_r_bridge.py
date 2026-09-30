@@ -32,34 +32,37 @@ def gcm_test_r(
 ) -> CIResult:
     """Call the official R package `GeneralisedCovarianceMeasure::gcm.test`.
 
-    🇬🇧 A bridge, not a reimplementation: hands the same inputs to the
-    real R source (via rpy2) and wraps its output in the shared
-    `CIResult` contract, so it can be compared against `gcm_test` (the
-    Python port) using identical call sites in tests.
+    A bridge, not a reimplementation: it hands the same inputs to the R package
+    (via rpy2) and wraps its output in the shared `CIResult` contract. If both
+    precomputed residuals are given, `x`, `y` and `z` are ignored.
 
-    🇪🇸 Un puente, no una reimplementación: le pasa las mismas entradas
-    al código fuente R real (vía rpy2) y envuelve su salida en el
-    contrato compartido `CIResult`, para poder compararlo con `gcm_test`
-    (el port a Python) usando exactamente las mismas llamadas en los tests.
+    Parameters
+    ----------
+    x : ndarray of shape (n,) or None, optional (default: None)
+        Sample of X.
 
-    Args:
-        x: Test variable, shape (n,) — Variable a testear, forma (n,).
-        y: Test variable, shape (n,) — Variable a testear, forma (n,).
-        z: Conditioning set, shape (n, dz) — Conjunto de condicionamiento,
-            forma (n, dz).
-        alpha: Significance level — Nivel de significación.
-        nsim: Number of multiplier-bootstrap draws (multivariate case
-            only) — Número de repeticiones del bootstrap multiplicador
-            (solo caso multivariante).
-        resid_x_on_z: Precomputed residuals of x on z — Residuos
-            precalculados de x sobre z.
-        resid_y_on_z: Precomputed residuals of y on z — Residuos
-            precalculados de y sobre z.
+    y : ndarray of shape (n,) or None, optional (default: None)
+        Sample of Y.
 
-    Returns:
-        CIResult with the R package's statistic, p-value and reject
-        decision — CIResult con el estadístico, p-valor y decisión de
-        rechazo del paquete R.
+    z : ndarray of shape (n, d_z) or None, optional (default: None)
+        Sample of the conditioning set.
+
+    alpha : float, optional (default: 0.05)
+        Significance level; the test rejects if ``p_value < alpha``.
+
+    nsim : int, optional (default: 499)
+        Number of multiplier-bootstrap draws (multivariate case only).
+
+    resid_x_on_z : ndarray or None, optional (default: None)
+        Precomputed residuals of X on Z.
+
+    resid_y_on_z : ndarray or None, optional (default: None)
+        Precomputed residuals of Y on Z.
+
+    Returns
+    -------
+    result : CIResult
+        The R package's statistic, p-value and decision.
     """
     r_args: dict[str, object] = {"alpha": alpha, "nsim": nsim}
     if resid_x_on_z is not None and resid_y_on_z is not None:
