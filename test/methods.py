@@ -5,7 +5,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from src.CI_tests.common import CIResult
-from src.CI_tests.Fisher_Z.fisher_z import fisher_z_test
+from src.CI_tests.Fisher_Z.fisher_z import FisherZ
 from src.CI_tests.GCM.gcm import gcm_test
 from src.CI_tests.KCI.kci import kci_test
 from test.CI_tests.Fisher_Z.fisher_z_causallearn_bridge import fisher_z_test_causallearn
@@ -79,5 +79,5 @@ METHODS = [
     RegisteredMethod("gcm", gcm_test, gcm_test_r, _gcm_kwargs),
     RegisteredMethod("kci", kci_test, kci_test_causallearn, _kci_kwargs),
     RegisteredMethod("kci_bootstrap", kci_test, kci_test_causallearn, _kci_bootstrap_kwargs),
-    RegisteredMethod("fisher_z", fisher_z_test, fisher_z_test_causallearn, _fisher_z_kwargs),
+    RegisteredMethod("fisher_z", FisherZ().test, fisher_z_test_causallearn, _fisher_z_kwargs),
 ]

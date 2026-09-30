@@ -253,7 +253,7 @@ class CMIknn:
         return pval
 
     ######################################################################################
-    def CMIknn_test(
+    def test(
         self,
         x: NDArray[np.float64],
         y: NDArray[np.float64],
@@ -337,6 +337,6 @@ def cmiknn_test(
         p-value and ``reject`` the decision at level ``alpha``.
     """
     z_values = data[z].to_numpy(dtype=np.float64) if z else None
-    return CMIknn(**kwargs).CMIknn_test(  # type: ignore[arg-type]
+    return CMIknn(**kwargs).test(  # type: ignore[arg-type]
         data[x].to_numpy(dtype=np.float64), data[y].to_numpy(dtype=np.float64), z_values, alpha
     )
