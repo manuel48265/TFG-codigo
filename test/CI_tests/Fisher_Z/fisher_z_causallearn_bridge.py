@@ -2,48 +2,50 @@
 # that package is copied or redistributed here.
 
 import numpy as np
+import pandas as pd
 from causallearn.utils.cit import FisherZ
-from numpy.typing import NDArray
 
-from src.CI_tests.common import CIResult, col, n_cols
+from src.CI_tests.common import CIResult, frame_to_arrays
 
 
 def fisher_z_test_causallearn(
-    x: NDArray[np.float64],
-    y: NDArray[np.float64],
-    z: NDArray[np.float64] | None = None,
+    data: pd.DataFrame,
+    x: str,
+    y: str,
+    z: list[str] | None = None,
     alpha: float = 0.05,
 ) -> CIResult:
     """Call causal-learn's `FisherZ` CI test.
 
-    🇬🇧 A bridge, not a reimplementation: hands the same inputs to
-    causal-learn's actual `FisherZ` and wraps its output in the shared
-    `CIResult` contract. Its public `__call__` only returns a p-value (no
-    signed statistic), so `statistic` is left as None rather than
-    recomputed here from its internals.
+    A bridge, not a reimplementation: it hands the same data to causal-learn's
+    `FisherZ` and wraps its output in the shared `CIResult` contract. Its public
+    `__call__` only returns a p-value, so ``statistic`` is None.
 
-    🇪🇸 Un puente, no una reimplementación: le pasa las mismas entradas al
-    `FisherZ` real de causal-learn y envuelve su salida en el contrato
-    compartido `CIResult`. Su `__call__` público solo devuelve un p-valor
-    (sin estadístico con signo), así que `statistic` se deja en None en
-    vez de recalcularlo aquí a partir de sus internos.
+    Parameters
+    ----------
+    data : DataFrame
+        Observations in rows, numeric variables in columns.
 
-    Args:
-        x: Test variable, shape (n,) — Variable a testear, forma (n,).
-        y: Test variable, shape (n,) — Variable a testear, forma (n,).
-        z: Conditioning set, shape (n, dz), or None — Conjunto de
-            condicionamiento, forma (n, dz), o None.
-        alpha: Significance level — Nivel de significación.
+    x : str
+        Name of the first tested column.
 
-    Returns:
-        CIResult with causal-learn's p-value and reject decision —
-        CIResult con el p-valor y la decisión de rechazo de causal-learn.
+    y : str
+        Name of the second tested column.
+
+    z : list of str or None, optional (default: None)
+        Names of the conditioning columns. If None or empty, the test is marginal.
+
+    alpha : float, optional (default: 0.05)
+        Significance level; the test rejects if ``p_value < alpha``.
+
+    Returns
+    -------
+    result : CIResult
+        causal-learn's p-value and decision at level ``alpha``.
     """
-    dim_z = n_cols(z) if z is not None else 0
-    columns = [x, y]
-    if z is not None:
-        columns += [col(z, j) for j in range(dim_z)]
-    data = np.column_stack(columns)
+    x_values, y_values, z_values = frame_to_arrays(data, x, y, z)
+    columns = [x_values, y_values] + ([] if z_values is None else list(z_values.T))
+    dim_z = len(columns) - 2
 
-    p_value = float(FisherZ(data)(0, 1, tuple(range(2, 2 + dim_z))))
+    p_value = float(FisherZ(np.column_stack(columns))(0, 1, tuple(range(2, 2 + dim_z))))
     return CIResult(statistic=None, p_value=p_value, reject=(p_value < alpha))

@@ -4,7 +4,8 @@ import pytest
 from tigramite.independence_tests.cmiknn import CMIknn as TigramiteCMIknn
 
 from src.CI_tests.CMIknn.CMIknn import CMIknn, cmiknn_test
-from test.scenarios import SCENARIOS, Scenario
+from src.CI_tests.common import frame_to_arrays
+from test.df_scenarios import CONTINUOUS_SCENARIOS, DataFrameScenario
 
 
 def test_ranks_1d_data_descending_without_ties() -> None:
@@ -190,8 +191,10 @@ def test_gamma_null_fit_distinguishes_dependence_with_fewer_draws() -> None:
     ).reject
 
 
-@pytest.mark.parametrize("scenario", SCENARIOS, ids=lambda s: s.name)
-def test_cmi_matches_tigramite_given_the_same_permutation(scenario: Scenario) -> None:
+@pytest.mark.parametrize("scenario", CONTINUOUS_SCENARIOS, ids=lambda s: s.name)
+def test_cmi_matches_tigramite_given_the_same_permutation(
+    scenario: DataFrameScenario,
+) -> None:
     """Compare the CMI computation against tigramite's under the same permuted Y.
 
     Both implementations receive one permuted Y generated outside either
@@ -207,7 +210,9 @@ def test_cmi_matches_tigramite_given_the_same_permutation(scenario: Scenario) ->
     with near-ties, the order of two almost-equal values depends on the
     tie-break noise, which each implementation draws from its own RNG.
     """
-    x, y, z = scenario.generate(np.random.default_rng(scenario.clean_seed))
+    df = scenario.generate(np.random.default_rng(scenario.clean_seed))
+    x, y, z = frame_to_arrays(df, "x", "y", scenario.conditioning)
+    assert z is not None
     x2, y2, z2 = x.reshape(-1, 1), y.reshape(-1, 1), z
 
     ours = CMIknn(seed=0)

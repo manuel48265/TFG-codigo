@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.CI_tests.pearson_chi2.pearson_chi2 import PearsonChi2
+from src.CI_tests.pearson_chi2.pearson_chi2 import pearson_chi2_test
 from test.CI_tests.pearson_chi2.pearson_chi2_causallearn_bridge import (
     pearson_chi2_test_causallearn,
 )
@@ -49,10 +49,9 @@ def test_python_matches_causallearn(
     """
     df = build(np.random.default_rng(seed))
     z_cols = [c for c in df.columns if c not in ("x", "y")]
-    z = df[z_cols] if z_cols else None
 
-    py = PearsonChi2().test(df["x"], df["y"], z)
-    ref = pearson_chi2_test_causallearn(df["x"], df["y"], z)
+    py = pearson_chi2_test(df, "x", "y", z_cols)
+    ref = pearson_chi2_test_causallearn(df, "x", "y", z_cols)
 
     assert py.p_value == pytest.approx(ref.p_value)
     assert py.reject == ref.reject

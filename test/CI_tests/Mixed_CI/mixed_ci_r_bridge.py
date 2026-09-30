@@ -27,52 +27,42 @@ def mixed_ci_test_r(
 ) -> CIResult:
     """Call the official R package `MXM::ci.mm`.
 
-    🇬🇧 A bridge, not a reimplementation: hands the same data to the real R
-    source (via rpy2) and wraps its output in the shared `CIResult`
-    contract. Columns are renamed to collision-free tags before crossing
-    into R: `ci.mm`'s own code does `y <- dat[, ind1]` then later
-    `lm(y ~ ., data = ds1)` — if a column in `dat` is literally named "y"
-    (or "x", for the `ind2`/local-`x` side), R's formula resolves `y` from
-    `ds1` instead of the intended local variable, silently fitting the
-    wrong model. Verified against the installed MXM 1.5.8 by comparing
-    identical data under both naming schemes.
+    A bridge, not a reimplementation: it hands the same data to the R package
+    (via rpy2) and wraps its output in the shared `CIResult` contract.
 
-    🇪🇸 Un puente, no una reimplementación: le pasa los mismos datos al
-    código fuente R real (vía rpy2) y envuelve su salida en el contrato
-    compartido `CIResult`. Las columnas se renombran a etiquetas sin
-    colisión antes de cruzar a R: el propio código de `ci.mm` hace
-    `y <- dat[, ind1]` y luego `lm(y ~ ., data = ds1)` — si una columna de
-    `dat` se llama literalmente "y" (o "x", para el lado `ind2`/`x` local),
-    la fórmula de R resuelve `y` desde `ds1` en vez de la variable local
-    prevista, ajustando en silencio el modelo equivocado. Verificado contra
-    MXM 1.5.8 instalado comparando los mismos datos bajo ambos esquemas de
-    nombres.
+    Parameters
+    ----------
+    data : DataFrame
+        Observations in rows, variables in columns. Categorical columns need
+        dtype ``category``.
 
-    Args:
-        data: Full dataset — Conjunto de datos completo.
-        x: Column name of the first test variable — Nombre de columna de la
-            primera variable a testear.
-        y: Column name of the second test variable — Nombre de columna de
-            la segunda variable a testear.
-        z: Column names of the conditioning set, or None — Nombres de
-            columna del conjunto de condicionamiento, o None.
-        alpha: Significance level — Nivel de significación.
+    x : str
+        Name of the first tested column.
 
-    Returns:
-        CIResult with `ci.mm`'s p-value and reject decision; `statistic` is
-        None (R's `2*max(t1,t2)`-style stat has no theoretical backing in
-        the paper, see `mixed_ci.py`) — CIResult con el p-valor y la
-        decisión de rechazo de `ci.mm`; `statistic` es None (el estadístico
-        de R, tipo `2*max(t1,t2)`, no tiene respaldo teórico en el paper,
-        ver `mixed_ci.py`).
+    y : str
+        Name of the second tested column.
+
+    z : list of str or None, optional (default: None)
+        Names of the conditioning columns. If None or empty, the test is marginal.
+
+    alpha : float, optional (default: 0.05)
+        Significance level; the test rejects if ``p_value < alpha``.
+
+    Returns
+    -------
+    result : CIResult
+        ``ci.mm``'s p-value and decision at level ``alpha``; ``statistic`` is None.
     """
+    # ci.mm fits `lm(y ~ ., data = ds1)`, so a column literally named "y" (or "x")
+    # would shadow the local variable and silently fit the wrong model; the
+    # columns are renamed to collision-free tags before crossing into R.
     cs_rename = {col: f"r_cs{i}" for i, col in enumerate(z)} if z else {}
     rename = {x: "r_ind1", y: "r_ind2"} | cs_rename
     r_ready = data.rename(columns=rename)
 
     with localconverter(_conversion):
         r_df = ro.conversion.get_conversion().py2rpy(r_ready)
-        cs = ro.NULL if z is None else ro.StrVector([rename[c] for c in z])
+        cs = ro.StrVector([rename[c] for c in z]) if z else ro.NULL
         result = _mxm.ci_mm("r_ind1", "r_ind2", cs, r_df)
         _, log_p, _ = list(result)
 

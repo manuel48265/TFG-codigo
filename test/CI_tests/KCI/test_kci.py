@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import pytest
+from sklearn.metrics.pairwise import rbf_kernel
 
 from src.CI_tests.KCI.kci import KCI, kci_test
 from src.CI_tests.KCI.kci_utils import center_kernel_matrix_regression
@@ -159,3 +160,45 @@ def test_constant_conditioning_column_is_ignored() -> None:
 
     assert kci_test(df, "x", "y", ["z", "c"]).reject
     assert not kci_test(_dataframe(0.0).assign(c=1.0), "x", "y", ["z", "c"]).reject
+
+
+def test_marginal_statistic_is_the_hsic_of_the_centered_kernels() -> None:
+    """Check the statistic against sklearn's Gaussian kernel and an explicit centering matrix."""
+    rng = np.random.default_rng(7)
+    n = 150
+    x = rng.standard_normal(n)
+    y = x**2 + rng.standard_normal(n)
+    theta = 1 / 0.8**2  # base width for n < 200, one column each
+    centering = np.eye(n) - np.ones((n, n)) / n
+
+    def centered_kernel(v: np.ndarray) -> np.ndarray:
+        standardized = ((v - v.mean()) / v.std(ddof=1)).reshape(-1, 1)
+        return centering @ rbf_kernel(standardized, gamma=0.5 * theta) @ centering
+
+    expected = np.sum(centered_kernel(x) * centered_kernel(y))
+
+    assert KCI().test(x, y).statistic == pytest.approx(expected)
+
+
+def test_marginal_detects_dependence_without_correlation() -> None:
+    rng = np.random.default_rng(8)
+    x = rng.standard_normal(300)
+    y = x**2 + 0.3 * rng.standard_normal(300)
+
+    assert abs(np.corrcoef(x, y)[0, 1]) < 0.2
+    assert KCI().test(x, y).reject
+
+
+@pytest.mark.parametrize("approx", [True, False])
+def test_marginal_does_not_reject_independence(approx: bool) -> None:
+    rng = np.random.default_rng(9)
+
+    assert not KCI(approx=approx).test(rng.standard_normal(300), rng.standard_normal(300)).reject
+
+
+def test_marginal_accepts_empty_z_array() -> None:
+    rng = np.random.default_rng(10)
+    x = rng.standard_normal(100)
+    y = x + rng.standard_normal(100)
+
+    assert KCI().test(x, y, np.empty((100, 0))) == KCI().test(x, y)

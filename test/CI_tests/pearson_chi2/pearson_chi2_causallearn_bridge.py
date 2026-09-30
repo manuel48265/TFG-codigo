@@ -8,39 +8,41 @@ from src.CI_tests.common import CIResult
 
 
 def pearson_chi2_test_causallearn(
-    x: pd.Series,
-    y: pd.Series,
-    z: pd.DataFrame | None = None,
+    data: pd.DataFrame,
+    x: str,
+    y: str,
+    z: list[str] | None = None,
     alpha: float = 0.05,
 ) -> CIResult:
     """Call causal-learn's `chisq` CI test.
 
-    🇬🇧 A bridge, not a reimplementation: hands the same inputs to
-    causal-learn's actual `Chisq_or_Gsq` and wraps its output in the shared
-    `CIResult` contract. Its public `__call__` only returns a p-value (no
-    raw statistic), so `statistic` is left as None rather than recomputed
-    here from its internals.
+    A bridge, not a reimplementation: it hands the same data to causal-learn's
+    `chisq` test and wraps its output in the shared `CIResult` contract. Its
+    public `__call__` only returns a p-value, so ``statistic`` is None.
 
-    🇪🇸 Un puente, no una reimplementación: le pasa las mismas entradas al
-    `Chisq_or_Gsq` real de causal-learn y envuelve su salida en el contrato
-    compartido `CIResult`. Su `__call__` público solo devuelve un p-valor
-    (sin estadístico crudo), así que `statistic` se deja en None en vez de
-    recalcularlo aquí a partir de sus internos.
+    Parameters
+    ----------
+    data : DataFrame
+        Observations in rows, categorical variables in columns.
 
-    Args:
-        x: Test variable (categorical) — Variable a testear (categórica).
-        y: Test variable (categorical) — Variable a testear (categórica).
-        z: Conditioning set, or None — Conjunto de condicionamiento, o None.
-        alpha: Significance level — Nivel de significación.
+    x : str
+        Name of the first tested column.
 
-    Returns:
-        CIResult with causal-learn's p-value and reject decision —
-        CIResult con el p-valor y la decisión de rechazo de causal-learn.
+    y : str
+        Name of the second tested column.
+
+    z : list of str or None, optional (default: None)
+        Names of the conditioning columns. If None or empty, the test is marginal.
+
+    alpha : float, optional (default: 0.05)
+        Significance level; the test rejects if ``p_value < alpha``.
+
+    Returns
+    -------
+    result : CIResult
+        causal-learn's p-value and decision at level ``alpha``.
     """
-    columns = [x.rename("x"), y.rename("y")] + ([z] if z is not None else [])
-    data = pd.concat(columns, axis=1).to_numpy(dtype=object)
-
-    dim_z = 0 if z is None else z.shape[1]
-    cit = CIT(data, "chisq")
-    p_value = float(cit(0, 1, tuple(range(2, 2 + dim_z))))
+    columns = [x, y, *(z or [])]
+    cit = CIT(data[columns].to_numpy(dtype=object), "chisq")
+    p_value = float(cit(0, 1, tuple(range(2, len(columns)))))
     return CIResult(statistic=None, p_value=p_value, reject=(p_value < alpha))
