@@ -1,8 +1,10 @@
 import csv
 import io
 import os
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
@@ -10,6 +12,9 @@ from numpy.typing import NDArray
 
 from src.CI_tests.common import CIResult
 from src.Experiments.DAG_Generation.fundamental_topology_generator import FundamentalCase
+
+if TYPE_CHECKING:
+    from _typeshed import DataclassInstance
 
 
 def discretize_for_chi2(x: NDArray[np.float64], max_bins: int = 5) -> NDArray[np.intp]:
@@ -191,7 +196,7 @@ def build_trial_result(
     )
 
 
-def append_trial_results(path: Path, results: list[TrialResult]) -> None:
+def append_trial_results(path: Path, results: "Sequence[DataclassInstance]") -> None:
     """Append several results to a CSV file with a single write.
 
     The header is written if the file is new or empty. Writing all the rows at once
@@ -202,13 +207,13 @@ def append_trial_results(path: Path, results: list[TrialResult]) -> None:
     path : Path
         CSV file.
 
-    results : list of TrialResult
-        Rows to append; there must be at least one.
+    results : sequence of dataclass instances
+        Rows to append, all of the same dataclass; there must be at least one.
 
     Raises
     ------
     ValueError
-        If the file already has a header that differs from the fields of ``TrialResult``.
+        If the file already has a header that differs from the fields of the rows.
     """
     rows = [asdict(result) for result in results]
     fieldnames = list(rows[0].keys())
@@ -217,7 +222,7 @@ def append_trial_results(path: Path, results: list[TrialResult]) -> None:
         with path.open(newline="") as f:
             header = next(csv.reader(f))
         if header != fieldnames:
-            raise ValueError(f"{path} has a different header than TrialResult; use another file.")
+            raise ValueError(f"{path} has a different header than the rows; use another file.")
     buffer = io.StringIO()
     writer = csv.DictWriter(buffer, fieldnames=fieldnames)
     if is_new:

@@ -1,4 +1,4 @@
-.PHONY: check format test experiment1
+.PHONY: check format test experiment1 experiment2
 
 check:
 	./scripts/check.sh
@@ -13,3 +13,6 @@ test:
 WORKERS ?= 8
 experiment1:
 	uv run python -m src.Experiments.Experimental_cases.run_experiment --workers $(WORKERS)
+
+experiment2:
+	uv run python -m src.Experiments.Experimental_cases.run_pc_experiment --workers $(WORKERS)

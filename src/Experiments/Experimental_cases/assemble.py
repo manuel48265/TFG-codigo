@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -31,7 +32,7 @@ def assemble_dataset(
     rng: np.random.Generator,
     topology: list[list[int]],
     types: list[VariableType],
-    rules: Model,
+    rules: Model | Sequence[Model],
     n: int,
 ) -> GeneratedDataset:
     """Generate a dataset from a DAG, one variable after the other.
@@ -47,8 +48,9 @@ def assemble_dataset(
     types : list of VariableType
         Type of each variable.
 
-    rules : Model
-        Family of structural models every variable belongs to.
+    rules : Model or sequence of Model
+        Family of structural models every variable belongs to; a sequence gives the family
+        of each variable, in the order of ``topology``.
 
     n : int
         Number of observations.
@@ -62,12 +64,11 @@ def assemble_dataset(
     roles: dict[str, tuple[list[str], str | None]] = {}
     for j, parents in enumerate(topology):
         name = f"v{j}"
+        rule = rules if isinstance(rules, Model) else rules[j]
         if not parents:
-            columns[name] = generate_root(rng, n, rules, types[j])
+            columns[name] = generate_root(rng, n, rule, types[j])
             continue
-        node = generate_node(
-            rng, pd.DataFrame(columns), [f"v{p}" for p in parents], rules, types[j]
-        )
+        node = generate_node(rng, pd.DataFrame(columns), [f"v{p}" for p in parents], rule, types[j])
         columns[name] = node.values
         roles[name] = (node.mean_parents, node.scale_parent)
     return GeneratedDataset(pd.DataFrame(columns), roles)
