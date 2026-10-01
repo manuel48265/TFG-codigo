@@ -1,0 +1,10 @@
+parent,child
+cylinders,displacement
+displacement,acceleration
+displacement,horsepower
+displacement,mpg
+displacement,weight
+weight,mpg
+weight,acceleration
+horsepower,acceleration
+horsepower,mpg
