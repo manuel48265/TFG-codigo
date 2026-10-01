@@ -20,10 +20,11 @@ import os
 import subprocess
 import time
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -68,6 +69,7 @@ RULES: dict[str, Model] = {
 }
 TYPE_MIXES = ("continuous", "half_categorical", "categorical")
 CATEGORICAL_TYPES = (VariableType.BINARY, VariableType.ORDINAL, VariableType.NOMINAL)
+N_SAMPLES = (500, 1000)  # nested: the smaller datasets are the first rows of the largest
 MAX_ATTEMPTS = 20  # datasets with a constant column are generated again, up to this many times
 DEFAULT_OUTPUT = Path("src/Experiments/Results/experiment_confusion.csv")
 
@@ -114,8 +116,12 @@ class Case:
 
     @property
     def seed(self) -> int:
-        """Seed derived from the identifier, so it does not depend on the order of the runs."""
-        return int.from_bytes(hashlib.sha256(self.dataset_id.encode()).digest()[:8], "big") >> 1
+        """Seed derived from the identifier without the sample size, shared by the sample sizes.
+
+        It does not depend on the order of the runs either.
+        """
+        text = self.dataset_id.replace(f"-n{self.n_samples}-", "-")
+        return int.from_bytes(hashlib.sha256(text.encode()).digest()[:8], "big") >> 1
 
 
 @dataclass(frozen=True)
@@ -159,7 +165,7 @@ def build_cases(
     reps: int = 50,
     topologies: tuple[FundamentalCase, ...] = tuple(FundamentalCase),
     z_sizes: tuple[int, ...] = (1, 2, 3),
-    n_samples: tuple[int, ...] = (500, 1000),
+    n_samples: tuple[int, ...] = N_SAMPLES,
     rules: tuple[str, ...] = tuple(RULES),
     type_mixes: tuple[str, ...] = TYPE_MIXES,
 ) -> list[Case]:
@@ -227,13 +233,20 @@ def sample_types(rng: np.random.Generator, n_nodes: int, type_mix: str) -> list[
 
 
 def _generate(case: Case) -> tuple[GeneratedDataset, list[VariableType], int] | None:
-    """Generate the dataset of a case, again with the next seed if a column is constant."""
+    """Generate the dataset with the largest sample size, again if a column is constant.
+
+    The data of a case are the first rows of it, so the sample sizes are nested. A dataset is
+    accepted only if none of its nested subsets has a constant column.
+    """
+    n_max = max(*N_SAMPLES, case.n_samples)
     topology = fundamental_topology(case.topology, case.z_size)
     for attempt in range(1, MAX_ATTEMPTS + 1):
         rng = np.random.default_rng(case.seed + attempt - 1)
         types = sample_types(rng, len(topology.topology), case.type_mix)
-        dataset = assemble_dataset(rng, topology.topology, types, RULES[case.rule], case.n_samples)
-        if not has_constant_column(dataset.data):
+        dataset = assemble_dataset(rng, topology.topology, types, RULES[case.rule], n_max)
+        if not any(
+            has_constant_column(dataset.data.iloc[:n]) for n in (*N_SAMPLES, case.n_samples)
+        ):
             return dataset, types, attempt
     return None
 
@@ -292,7 +305,7 @@ def run_dataset(case: Case, code_version: str = "") -> list[TrialResult]:
     results = []
     for spec in TESTS:
         try:
-            prepared = spec.post_process(dataset.data)
+            prepared = spec.post_process(dataset.data.iloc[: case.n_samples].reset_index(drop=True))
             extra = spec.kwargs(case.seed)
             with warnings.catch_warnings(record=True) as caught:
                 warnings.simplefilter("always")
@@ -417,10 +430,11 @@ def code_version() -> str:
 
 def run_experiment(
     output: Path,
-    cases: list[Case],
+    cases: Sequence[Any],
     workers: int = 1,
     limit: int | None = None,
     report_every: int = 25,
+    runner: Callable[..., Sequence[Any]] = run_dataset,
 ) -> int:
     """Run the pending cases and append their results to ``output``.
 
@@ -433,8 +447,8 @@ def run_experiment(
     output : Path
         CSV file of results.
 
-    cases : list of Case
-        Cases of the experiment, in the order they are run.
+    cases : sequence of Case
+        Cases of the experiment, in the order they are run; each one needs a ``dataset_id``.
 
     workers : int, optional (default: 1)
         Number of processes.
@@ -444,6 +458,10 @@ def run_experiment(
 
     report_every : int, optional (default: 25)
         Print the progress every this many datasets.
+
+    runner : callable, optional (default: run_dataset)
+        Module-level function ``runner(case, code_version=...)`` that returns the rows of a
+        case, one per CI test, as dataclass instances. It must be picklable.
 
     Returns
     -------
@@ -460,10 +478,10 @@ def run_experiment(
         print("Experiment finished: every case is already in the file.", flush=True)
 
     version = code_version()
-    run = partial(run_dataset, code_version=version)
+    run = partial(runner, code_version=version)
     started = time.perf_counter()
 
-    def write(count: int, rows: list[TrialResult]) -> None:
+    def write(count: int, rows: Sequence[Any]) -> None:
         append_trial_results(output, rows)
         if count % report_every == 0 or count == len(pending):
             elapsed = time.perf_counter() - started
