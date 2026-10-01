@@ -1,4 +1,6 @@
 import csv
+import io
+import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -142,6 +144,18 @@ class TrialResult:
     conditional_reject: bool
     predicted_case: str
     correct: bool
+    dataset_id: str = ""
+    attempts: int = 1
+    alpha: float = 0.05
+    x_type: str = ""
+    y_type: str = ""
+    z_types: str = ""
+    roles: str = ""
+    marginal_seconds: float = float("nan")
+    conditional_seconds: float = float("nan")
+    n_warnings: int = 0
+    error: str = ""
+    code_version: str = ""
 
 
 def build_trial_result(
@@ -177,11 +191,44 @@ def build_trial_result(
     )
 
 
-def append_trial_result(path: Path, result: TrialResult) -> None:
-    row = asdict(result)
-    is_new = not path.exists()
+def append_trial_results(path: Path, results: list[TrialResult]) -> None:
+    """Append several results to a CSV file with a single write.
+
+    The header is written if the file is new or empty. Writing all the rows at once
+    keeps a dataset's rows together if the process is interrupted.
+
+    Parameters
+    ----------
+    path : Path
+        CSV file.
+
+    results : list of TrialResult
+        Rows to append; there must be at least one.
+
+    Raises
+    ------
+    ValueError
+        If the file already has a header that differs from the fields of ``TrialResult``.
+    """
+    rows = [asdict(result) for result in results]
+    fieldnames = list(rows[0].keys())
+    is_new = not path.exists() or path.stat().st_size == 0
+    if not is_new:
+        with path.open(newline="") as f:
+            header = next(csv.reader(f))
+        if header != fieldnames:
+            raise ValueError(f"{path} has a different header than TrialResult; use another file.")
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=fieldnames)
+    if is_new:
+        writer.writeheader()
+    writer.writerows(rows)
     with path.open("a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=list(row.keys()))
-        if is_new:
-            writer.writeheader()
-        writer.writerow(row)
+        f.write(buffer.getvalue())
+        f.flush()
+        os.fsync(f.fileno())
+
+
+def append_trial_result(path: Path, result: TrialResult) -> None:
+    """Append one result to a CSV file (see ``append_trial_results``)."""
+    append_trial_results(path, [result])
