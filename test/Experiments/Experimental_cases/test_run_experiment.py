@@ -18,6 +18,7 @@ def test_sample_sizes_share_seed_and_are_nested() -> None:
     data_small, types_small, attempts_small = generated_small
     data_large, types_large, attempts_large = generated_large
     assert (types_small, attempts_small) == (types_large, attempts_large)
+    assert data_small.roles == data_large.roles
     pd.testing.assert_frame_equal(
         data_small.data.iloc[:500].reset_index(drop=True),
         data_large.data.iloc[:500].reset_index(drop=True),
