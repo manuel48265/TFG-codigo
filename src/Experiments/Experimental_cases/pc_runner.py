@@ -1,4 +1,5 @@
 import time
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import cast
@@ -28,11 +29,16 @@ class PCRun:
 
     seconds : float
         Wall-clock time of the run.
+
+    cond_size_counts : str
+        Histogram of the conditioning set sizes as ``size:count`` pairs separated by ``;``,
+        in increasing size. The largest size and the mean follow from it.
     """
 
     edges: str
     n_ci_calls: int
     seconds: float
+    cond_size_counts: str
 
 
 class _ProjectCITest(CIT_Base):  # type: ignore[misc]
@@ -44,10 +50,10 @@ class _ProjectCITest(CIT_Base):  # type: ignore[misc]
         self.frame = cast(pd.DataFrame, kwargs["frame"])
         self.test = cast(Callable[..., CIResult], kwargs["test"])
         self.extra = cast(dict[str, object], kwargs["extra"])
-        self.counter = cast(list[int], kwargs["counter"])
+        self.cond_sizes = cast(Counter[int], kwargs["cond_sizes"])
 
     def __call__(self, X: int, Y: int, condition_set: list[int] | None = None) -> float:
-        self.counter[0] += 1
+        self.cond_sizes[len(condition_set) if condition_set else 0] += 1
         names = list(self.frame.columns)
         z = [names[i] for i in condition_set] if condition_set else None
         return self.test(self.frame, names[X], names[Y], z, **self.extra).p_value
@@ -120,9 +126,9 @@ def run_pc(
     Returns
     -------
     run : PCRun
-        Edges of the CPDAG, number of CI tests and time.
+        Edges of the CPDAG, number of CI tests, time and conditioning set sizes.
     """
-    counter = [0]
+    cond_sizes: Counter[int] = Counter()
     start = time.perf_counter()
     graph = pc(
         np.zeros(data.shape),  # causal-learn only needs the shape; the test reads the frame
@@ -135,7 +141,12 @@ def run_pc(
         frame=data,
         test=test,
         extra=test_kwargs,
-        counter=counter,
+        cond_sizes=cond_sizes,
     )
     seconds = time.perf_counter() - start
-    return PCRun(graph_to_text(graph.G.graph, list(data.columns)), counter[0], seconds)
+    return PCRun(
+        graph_to_text(graph.G.graph, list(data.columns)),
+        sum(cond_sizes.values()),
+        seconds,
+        ";".join(f"{size}:{count}" for size, count in sorted(cond_sizes.items())),
+    )

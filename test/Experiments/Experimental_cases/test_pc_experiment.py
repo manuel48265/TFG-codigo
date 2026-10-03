@@ -32,6 +32,8 @@ def test_run_pc_recovers_a_collider() -> None:
     run = run_pc(data, fisher_z_test)
     assert run.edges == "a->b;c->b"
     assert run.n_ci_calls > 0
+    sizes = {int(k): int(v) for k, v in (p.split(":") for p in run.cond_size_counts.split(";"))}
+    assert sum(sizes.values()) == run.n_ci_calls
 
 
 @pytest.mark.parametrize("n_nodes", [15, 8, 11])

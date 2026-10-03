@@ -119,6 +119,7 @@ class PCTrialResult:
     estimated_graph: str
     n_ci_calls: int
     seconds: float
+    cond_size_counts: str = ""
     error: str = ""
     code_version: str = ""
 
@@ -281,6 +282,7 @@ def run_pc_dataset(case: PCCase, code_version: str = "") -> list[PCTrialResult]:
             row.estimated_graph = run.edges
             row.n_ci_calls = run.n_ci_calls
             row.seconds = run.seconds
+            row.cond_size_counts = run.cond_size_counts
         except Exception as error:
             row.error = f"{type(error).__name__}: {error}"
         results.append(row)
