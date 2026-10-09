@@ -17,6 +17,7 @@ Run it with ``python -m src.Experiments.Experimental_cases.run_pc_experiment``.
 import argparse
 import hashlib
 import os
+import warnings
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -120,6 +121,7 @@ class PCTrialResult:
     n_ci_calls: int
     seconds: float
     cond_size_counts: str = ""
+    n_warnings: int = 0
     error: str = ""
     code_version: str = ""
 
@@ -228,7 +230,8 @@ def run_pc_dataset(case: PCCase, code_version: str = "") -> list[PCTrialResult]:
     """Generate the dataset of a case and run PC with every CI test on it.
 
     A test that raises an error is recorded with the error and without a graph instead of
-    stopping the experiment.
+    stopping the experiment. The warnings raised while PC runs are counted and not shown, so
+    that thousands of convergence warnings do not fill the log.
 
     Parameters
     ----------
@@ -278,7 +281,10 @@ def run_pc_dataset(case: PCCase, code_version: str = "") -> list[PCTrialResult]:
     for spec in TESTS:
         row = replace(base, ci_test=spec.name)
         try:
-            run = run_pc(spec.post_process(data), spec.test, ALPHA, **spec.kwargs(case.seed))
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                run = run_pc(spec.post_process(data), spec.test, ALPHA, **spec.kwargs(case.seed))
+            row.n_warnings = len(caught)
             row.estimated_graph = run.edges
             row.n_ci_calls = run.n_ci_calls
             row.seconds = run.seconds

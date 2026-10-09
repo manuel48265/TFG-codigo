@@ -13,8 +13,7 @@ decoupling structure from mechanism.
 
 ## Networks
 
-The 4 chosen are the ones cited as "standard benchmark networks" in
-`Referencias/Averin_2026_CI_Tests_Survey.pdf`, §9.5.
+The 4 chosen are the ones cited as "standard benchmark networks" 
 
 - **asia.bif** — ASIA (8 nodes, 8 edges), lung disease diagnosis.
   Lauritzen, S. L. (1988). *Local computations with probabilities on
