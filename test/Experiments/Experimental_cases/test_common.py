@@ -66,6 +66,14 @@ def test_to_float_columns_encodes_categories_and_casts_the_rest() -> None:
     assert result["text"].tolist() == [1.0, 0.0, 1.0]
 
 
+def test_to_float_columns_keeps_the_values_of_numeric_categories() -> None:
+    df = pd.DataFrame({"cylinders": pd.Categorical([4, 8, 6, 3], ordered=True)})
+
+    result = to_float_columns(df)
+
+    assert result["cylinders"].tolist() == [4.0, 8.0, 6.0, 3.0]
+
+
 def test_remove_unused_categories_only_touches_categorical_columns() -> None:
     df = pd.DataFrame(
         {

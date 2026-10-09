@@ -53,9 +53,10 @@ def discretize_continuous_columns(data: pd.DataFrame, max_bins: int = 5) -> pd.D
 def to_float_columns(data: pd.DataFrame) -> pd.DataFrame:
     """Return a copy of ``data`` with every column as ``float64``.
 
-    Non-numeric columns (``category``, ``object``, strings) are replaced by
-    their integer codes, numbered by the sorted order of the categories; the
-    numeric ones are cast.
+    A ``category`` column whose categories are numbers (counts such as a number of
+    cylinders) keeps those numbers, so the distances between them are not changed; other
+    non-numeric columns (``category``, ``object``, strings) are replaced by their integer
+    codes, numbered by the sorted order of the categories; the numeric ones are cast.
 
     Parameters
     ----------
@@ -67,13 +68,17 @@ def to_float_columns(data: pd.DataFrame) -> pd.DataFrame:
     floats : DataFrame
         Same columns and index as ``data``.
     """
-    return data.apply(
-        lambda column: (
-            column.astype(np.float64)
-            if pd.api.types.is_numeric_dtype(column)
-            else column.astype("category").cat.codes.astype(np.float64)
-        )
-    )
+
+    def to_float(column: pd.Series) -> pd.Series:
+        if isinstance(column.dtype, pd.CategoricalDtype):
+            if pd.api.types.is_numeric_dtype(column.cat.categories):
+                return column.astype(np.float64)
+            return column.cat.codes.astype(np.float64)
+        if pd.api.types.is_numeric_dtype(column):
+            return column.astype(np.float64)
+        return column.astype("category").cat.codes.astype(np.float64)
+
+    return data.apply(to_float)
 
 
 def remove_unused_categories(data: pd.DataFrame) -> pd.DataFrame:

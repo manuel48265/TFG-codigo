@@ -36,6 +36,20 @@ directory `falsifydags/`).
 The `networkx` and `xlrd` packages were only used once to convert the original GML and XLS
 files; they are not needed to load the data.
 
+## Variable types
+
+The CSV files do not store types, so they are set on loading from the description of each
+source:
+
+- **Auto MPG**: the UCI description (`auto-mpg.names`, "Attribute Information") lists
+  `cylinders`, `model year` and `origin` as "multi-valued discrete" and the rest as
+  "continuous". `cylinders` and `model year` are loaded as ordered categories and `origin`
+  (1 USA, 2 Europe, 3 Japan) as unordered categories; the categories keep their numeric
+  values, so the tests that read numbers see the original counts. Of the three, only
+  `cylinders` is a node of the graph; its levels 3 and 5 are rare (4 and 3 cars).
+- **Sachs** and **APM**: every column is continuous (protein intensities and service
+  metrics, with hundreds of distinct values each).
+
 ## Cleaning
 
 - **Auto MPG**: done when the file was produced (see above), so the CSV has no missing values.

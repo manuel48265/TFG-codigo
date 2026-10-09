@@ -56,14 +56,22 @@ def load_sachs() -> RealDataset:
 def load_auto_mpg() -> RealDataset:
     """Load the Auto MPG data, without missing values, and its reference graph.
 
-    ``model year`` and ``origin`` are columns of the data but not nodes of the graph.
+    ``model year`` and ``origin`` are columns of the data but not nodes of the graph. The
+    UCI description of the data set lists ``cylinders``, ``model year`` and ``origin`` as
+    multi-valued discrete and the rest as continuous, so the first two are loaded as
+    ordered categories and ``origin`` (1 USA, 2 Europe, 3 Japan) as unordered categories;
+    the tests that need a categorical variable then treat them as such instead of as
+    continuous numbers. The categories keep their numeric values.
 
     Returns
     -------
     dataset : RealDataset
         392 observations of 8 variables and a graph with 6 nodes and 9 edges.
     """
-    return _load("auto_mpg", pd.read_csv(DATA_DIR / "auto_mpg_data.csv"))
+    data = pd.read_csv(DATA_DIR / "auto_mpg_data.csv")
+    for column, ordered in (("cylinders", True), ("model year", True), ("origin", False)):
+        data[column] = pd.Categorical(data[column], ordered=ordered)
+    return _load("auto_mpg", data)
 
 
 def load_apm() -> RealDataset:
