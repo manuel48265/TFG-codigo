@@ -15,11 +15,16 @@ CategoricalFunction = Callable[[NDArray[np.int64]], NDArray[np.float64]]
 
 ## Shape ##
 # Mean functions u -> f(u); the linear case is the identity. They are applied to a parent
-# and the result is standardized (see standardized_term in node_generator.py).
+# in robust scales from its median and the result is standardized (see standardized_term
+# in node_generator.py). The parameter ranges keep every nonlinear shape clearly nonlinear
+# at the low end (on a Gaussian parent, at least ~10% of the dependence is not captured by
+# a line, like the cube's 15%): below them sine, tanh and exponential are almost linear.
+# The top of the exponential is limited so that a few observations do not carry most of
+# the variance.
 
 
 def sine_shape(rng: np.random.Generator) -> ShapeFunction:
-    omega = rng.uniform(0.5, 1.5)
+    omega = rng.uniform(1.0, 2.0)
     return lambda u: np.sin(omega * u)
 
 
@@ -29,7 +34,7 @@ def cosine_shape(rng: np.random.Generator) -> ShapeFunction:
 
 
 def exponential_shape(rng: np.random.Generator) -> ShapeFunction:
-    magnitude = rng.uniform(0.5, 2.0)
+    magnitude = rng.uniform(0.5, 1.0)
     sign = rng.choice((-1.0, 1.0))
     beta = sign * magnitude
     return lambda u: np.exp(beta * u) - 1
@@ -44,7 +49,7 @@ def cube_shape(rng: np.random.Generator) -> ShapeFunction:
 
 
 def tanh_shape(rng: np.random.Generator) -> ShapeFunction:
-    lam = rng.uniform(0.5, 2.0)
+    lam = rng.uniform(1.5, 3.0)
     return lambda u: np.tanh(lam * u)
 
 
