@@ -2,7 +2,7 @@ import pytest
 
 from src.Experiments.DAG_Generation.real_dag_topologies import BNLEARN_NETWORKS, load_bif_topology
 
-# (n_nodes, n_edges) as reported in Referencias/survey.pdf, section 9.5.
+# (n_nodes, n_edges) as reported in Referencias/Averin_2026_CI_Tests_Survey.pdf, section 9.5.
 _EXPECTED_SIZE = {
     "asia": (8, 8),
     "sachs": (11, 17),

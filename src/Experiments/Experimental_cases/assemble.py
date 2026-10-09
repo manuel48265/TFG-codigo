@@ -8,6 +8,13 @@ from src.Experiments.Node_Generation.causal_models import Model
 from src.Experiments.Node_Generation.node_generator import generate_node, generate_root
 from src.Experiments.Node_Generation.utils import VariableType
 
+# Extra rows generated with every dataset and dropped before returning it. The constants
+# the generator estimates from the data (medians, robust scales, projections, noise
+# levels) are computed on them too, so they approximate population values: each
+# mechanism is a fixed function of its parents, the same whatever ``n``, and the
+# returned rows are independent draws from it.
+REFERENCE_ROWS = 10_000
+
 
 @dataclass(frozen=True)
 class GeneratedDataset:
@@ -37,6 +44,10 @@ def assemble_dataset(
 ) -> GeneratedDataset:
     """Generate a dataset from a DAG, one variable after the other.
 
+    ``n + REFERENCE_ROWS`` rows are generated and the first ``n`` are returned; the
+    rows are independent, so they are a sample from the model, whose constants were
+    estimated on all the rows.
+
     Parameters
     ----------
     rng : Generator
@@ -62,13 +73,15 @@ def assemble_dataset(
     """
     columns: dict[str, pd.Series] = {}
     roles: dict[str, tuple[list[str], str | None]] = {}
+    total = n + REFERENCE_ROWS
     for j, parents in enumerate(topology):
         name = f"v{j}"
         rule = rules if isinstance(rules, Model) else rules[j]
         if not parents:
-            columns[name] = generate_root(rng, n, rule, types[j])
+            columns[name] = generate_root(rng, total, rule, types[j])
             continue
         node = generate_node(rng, pd.DataFrame(columns), [f"v{p}" for p in parents], rule, types[j])
         columns[name] = node.values
         roles[name] = (node.mean_parents, node.scale_parent)
-    return GeneratedDataset(pd.DataFrame(columns), roles)
+    data = pd.DataFrame(columns).iloc[:n].reset_index(drop=True)
+    return GeneratedDataset(data, roles)

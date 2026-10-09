@@ -5,9 +5,14 @@ A node is generated from its parents with the functions of a model family (see
 detectable, which lets an experiment measure the behavior of the CI tests and not the
 weakness of the generated effects:
 
-- Each parent acts through a term standardized to unit variance, and the variance of the
-  mean is shared among the parents with a minimum share for each of them
+- Each parent acts through a term standardized to unit variance, with its tails
+  controlled and, for even functions, without a linear part; the variance of the mean
+  is shared among the parents with a minimum share for each of them
   (``standardized_term``, ``mean_coefficients``).
+- Every continuous node is standardized to mean 0 and unit variance after its noise
+  is added, and its children read that standardized value, as in internally-standardized
+  SCMs (Ormaniec et al., 2025); the scale a function acts on does not depend on the
+  position of the node in the graph (``latent_to_variable``).
 - The noise is set relative to the signal: its level stays inside the range that
   corresponds to an R2 between ``MIN_TARGET_R2`` and ``MAX_TARGET_R2``, and a parent that
   acts on the scale moves it inside that range following the shape of its function
@@ -21,7 +26,7 @@ weakness of the generated effects:
 """
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, cast
 
 import numpy as np
 import pandas as pd
@@ -32,6 +37,7 @@ from src.Experiments.Node_Generation.factory import (
     CategoricalFactory,
     FunctionFactory,
     LinearShapeFactory,
+    ShapeFunction,
 )
 from src.Experiments.Node_Generation.utils import (
     NodeFunction,
@@ -349,21 +355,69 @@ def discretization(
     return pd.qcut(latent_j, q=quantile_levels, labels=False)
 
 
-# Gain of the compression of ``standardized_term``: how many robust scales a value
-# has to be away from the median for the compression to start acting.
-COMPRESSION_GAIN = 2.0
+# Half-width, in robust scales of the parent, of the zone where a mean function is
+# applied exactly (see extend_beyond_zone).
+EXACT_ZONE = 3.0
+
+# Number of robust scales from the median beyond which the tails of a term are
+# compressed (see compress_tails).
+COMPRESSION_THRESHOLD = 5.0
+
+
+def robust_standardize(values: NDArray[np.float64]) -> NDArray[np.float64]:
+    """Center ``values`` at their median and divide them by their robust scale.
+
+    The bulk of the data ends up around 0 at scale 1 whatever its tails are, which a
+    division by the standard deviation does not achieve when a few values are extreme.
+
+    Parameters
+    ----------
+    values : ndarray of shape (n,)
+        Values to standardize; they must not be constant.
+
+    Returns
+    -------
+    standardized : ndarray of shape (n,)
+        Values in robust scales from the median.
+    """
+    return (values - np.median(values)) / robust_scale(values)
+
+
+def compress_tails(z: NDArray[np.float64]) -> NDArray[np.float64]:
+    """Keep ``z`` inside ``±COMPRESSION_THRESHOLD`` and compress it logarithmically outside.
+
+    With ``c = COMPRESSION_THRESHOLD``, a value ``|z| > c`` becomes
+    ``sign(z) (c + c log(|z| / c))``: the map is the identity inside the threshold,
+    continuous with a continuous derivative at it, increasing, and grows only
+    logarithmically beyond. Most observations keep their exact value, and a few
+    extreme ones cannot carry most of the variance. Outside the threshold it is the
+    symmetric version of the "started logarithm" of W. A. Stahel (``LogSt`` in the R
+    package DescTools), which uses the same junction for another purpose.
+
+    Parameters
+    ----------
+    z : ndarray of shape (n,)
+        Values in robust scales from the median (see ``robust_standardize``).
+
+    Returns
+    -------
+    compressed : ndarray of shape (n,)
+        Compressed values, in the same order as ``z``.
+    """
+    c = COMPRESSION_THRESHOLD
+    magnitude = np.abs(z)
+    outside = np.sign(z) * (c + c * np.log(np.maximum(magnitude, c) / c))
+    return np.where(magnitude <= c, z, outside)
 
 
 def compress_and_standardize(values: NDArray[np.float64]) -> NDArray[np.float64]:
-    """Compress the tails of ``values`` with ``arcsinh`` and scale them to unit variance.
+    """Compress the tails of ``values`` and scale them to mean 0 and unit variance.
 
-    The values are centered at their median and divided by a robust scale, so the bulk
-    of the data sits at scale 1 whatever the tails are; ``arcsinh`` of
-    ``COMPRESSION_GAIN`` times that is then taken and the result is centered and
-    divided by its standard deviation. ``arcsinh`` is an invertible, monotone map that
-    is close to the identity for small values and logarithmic for large ones, so it
-    keeps the shape of the data where most of it lies and stops a few extreme values
-    from dominating the variance or from squeezing the rest into a corner.
+    The values are put in robust scales from the median (``robust_standardize``),
+    compressed beyond ``COMPRESSION_THRESHOLD`` of them (``compress_tails``), and then
+    centered and divided by their standard deviation. The bulk of the data keeps its
+    exact shape, and a few extreme values can neither dominate the variance nor squeeze
+    the rest into a corner.
 
     Parameters
     ----------
@@ -375,17 +429,103 @@ def compress_and_standardize(values: NDArray[np.float64]) -> NDArray[np.float64]
     compressed : ndarray of shape (n,)
         Values with mean 0 and variance 1.
     """
-    compressed = np.arcsinh(COMPRESSION_GAIN * (values - np.median(values)) / robust_scale(values))
-    return (compressed - compressed.mean()) / compressed.std()
+    return standardize_variance(compress_tails(robust_standardize(values)))
+
+
+def _slope(function: ShapeFunction, u: float) -> float:
+    """Return the derivative of ``function`` at ``u`` by a central difference."""
+    step = 1e-5 * max(1.0, abs(u))
+    ends = function(np.array([u - step, u + step]))
+    return float((ends[1] - ends[0]) / (2 * step))
+
+
+def grows_beyond_zone(function: ShapeFunction, side: float) -> bool:
+    """Tell whether ``function`` grows beyond ``side * EXACT_ZONE`` faster than it can inside.
+
+    With ``b = EXACT_ZONE``, the change of the function from ``side * b`` to
+    ``side * 4b`` is compared with the change that its steepest slope inside
+    ``[-b, b]`` would give over the same distance. A function that grows faster than
+    linearly on that side (a square, a cube, an exponential towards its growing side)
+    exceeds it by far; a bounded or linear function (sine, cosine, tanh, identity, an
+    exponential towards its flat side) does not. The factor 2 leaves a margin for
+    functions that are close to linear.
+
+    Parameters
+    ----------
+    function : callable
+        Mean function of a numeric parent.
+
+    side : {-1.0, 1.0}
+        Side of the zone that is checked.
+
+    Returns
+    -------
+    grows : bool
+        Whether the function has to be extended on that side (see
+        ``extend_beyond_zone``).
+    """
+    b = EXACT_ZONE
+    inside = np.linspace(-b, b, 201)
+    steepest = float(np.max(np.abs(np.gradient(function(inside), inside))))
+    change = np.abs(function(np.array([side * 4 * b])) - function(np.array([side * b])))[0]
+    return bool(change > 2 * 3 * b * steepest)
+
+
+def extend_beyond_zone(function: ShapeFunction, z: NDArray[np.float64]) -> NDArray[np.float64]:
+    """Apply ``function`` to ``z``, extended with logarithmic growth where it grows too fast.
+
+    Inside ``[-b, b]``, with ``b = EXACT_ZONE``, the function is applied exactly. On a
+    side where it grows faster than linearly (``grows_beyond_zone``), the values beyond
+    the zone are replaced by ``f(s b) + s f'(s b) b log(|z| / b)``, with ``s`` the sign
+    of the side: the function continues with its value and slope at the edge, so the
+    result is continuous with a continuous derivative, but it grows only
+    logarithmically in the parent. The other sides keep the function as it is.
+
+    The extension acts on the argument of the function, before it can amplify the
+    tails of the parent. Compressing only the output of the function is not enough for
+    an exponential: the logarithm undoes it, so the output grows linearly in the parent
+    with a slope that increases with the threshold, and when exponentials are chained
+    along a path of the graph the extreme observations separate from the bulk a little
+    more at each node until they carry almost all of the variance.
+
+    Parameters
+    ----------
+    function : callable
+        Mean function of a numeric parent.
+
+    z : ndarray of shape (n,)
+        Parent in robust scales from its median (see ``robust_standardize``).
+
+    Returns
+    -------
+    values : ndarray of shape (n,)
+        Function applied to ``z``, with the extension on the sides that need it.
+    """
+    b = EXACT_ZONE
+    with np.errstate(over="ignore", invalid="ignore"):
+        values = np.asarray(function(z), dtype=np.float64).copy()
+    for side in (-1.0, 1.0):
+        beyond = side * z > b
+        if beyond.any() and grows_beyond_zone(function, side):
+            edge = function(np.array([side * b]))[0]
+            growth = side * _slope(function, side * b) * b * np.log(np.abs(z[beyond]) / b)
+            values[beyond] = edge + growth
+    return values
+
+
+def is_even(function: ShapeFunction) -> bool:
+    """Tell whether ``function`` is even, ``f(-u) = f(u)``, on ``[-2 EXACT_ZONE, 2 EXACT_ZONE]``."""
+    u = np.linspace(0.0, 2 * EXACT_ZONE, 61)
+    return bool(np.allclose(function(u), function(-u), rtol=1e-9, atol=1e-12))
 
 
 def standardized_term(
     function: NodeFunction, parent_series: pd.Series, compress: bool = True
 ) -> NDArray[np.float64]:
-    """Return ``function`` applied to a parent, with its tails compressed, standardized.
+    """Return ``function`` applied to a parent, with its tails controlled, standardized.
 
     The mean of a node is a sum with one term per parent, and the terms must weigh
-    according to their coefficient and not to their function. Two things prevent
+    according to their coefficient and not to their function. Three things prevent
     that if the raw values are used:
 
     - The scales differ: an exponential has far more variance than a sine, and a
@@ -394,18 +534,36 @@ def standardized_term(
       from the few observations in the tails of the parent, where it is large.
       Dividing by the standard deviation does not change that: most observations
       end up with a term close to zero, and the dependence on the parent is only
-      visible in a handful of points.
+      visible in a handful of points. The effect builds up along a path of the graph.
+    - An even function (square, cosine) is invisible to a linear test only when the
+      parent is symmetric around the center of the function. A skewed parent gives the
+      term a linear part, and a dependence meant to be hard for linear tests becomes
+      easy for them.
 
-    The second problem is solved by compressing the tails before standardizing,
-    with ``compress_and_standardize``: the shape of the function is kept where most
-    data lie and the tails stop dominating. The standardization, which is part of
-    that function, takes care of the first problem.
+    With ``compress=True`` the term is built in four steps. The parent is put in robust
+    scales from its median (``robust_standardize``), so the function acts on the bulk
+    of the data at a fixed scale wherever the node is in the graph. A numeric parent
+    goes through the function, extended with logarithmic growth beyond the exact zone
+    on the sides where it grows too fast (``extend_beyond_zone``); ordinal parents only
+    take a few values and are not extended, and binary parents enter as their 0/1 codes,
+    since centering a balanced one makes its two values symmetric and an even function
+    would be constant on them. The tails of the result are
+    compressed and it is standardized (``compress_and_standardize``). Finally, for an
+    even function of a non-binary numeric parent, the linear projection on the parent
+    is removed, so the term is uncorrelated with it. A binary parent is left as it is,
+    since any function of two values is linear and removing that part would leave
+    nothing.
 
-    The compression is nonlinear, so it makes even the identity function nonlinear. In
-    a linear model that would break the model: a partial correlation test, which is exact
-    for a linear Gaussian node, would reject conditional independence far more often
-    than its level. With ``compress=False`` the term is only standardized and stays
-    exactly linear if the function is.
+    The compression is nonlinear, so it makes even the identity function nonlinear in
+    the tails. In a linear model that would break the model: a partial correlation test,
+    which is exact for a linear Gaussian node, would reject conditional independence
+    more often than its level. With ``compress=False`` the term is only standardized and
+    stays exactly linear if the function is.
+
+    The statistics used (median, robust scale, projection) are those of the observations
+    given. The data are generated with extra reference rows (see ``assemble_dataset``),
+    so they approximate population values and the term is a fixed function of the
+    parent.
 
     Parameters
     ----------
@@ -417,8 +575,8 @@ def standardized_term(
         Observations of the parent.
 
     compress : bool, optional (default: True)
-        Whether to compress the tails before standardizing. It should be False for
-        linear models.
+        Whether to control the tails and remove the linear part of even functions. It
+        should be False for linear models.
 
     Returns
     -------
@@ -430,12 +588,38 @@ def standardized_term(
     ValueError
         If the term is constant, since the parent would then not affect the node.
     """
-    values = apply_function(function, parent_series)
+    constant = ValueError(
+        f"Parent '{parent_series.name}' has a constant term and cannot affect the node."
+    )
+    kind = variable_type(parent_series)
+    if not compress or kind == VariableType.NOMINAL:
+        values = apply_function(function, parent_series)
+    else:
+        shape = cast(ShapeFunction, function)
+        numbers = parent_series.to_numpy(dtype=np.float64)
+        if np.ptp(numbers) == 0.0:
+            raise constant
+        if kind == VariableType.BINARY:
+            # 0/1 as they are: centering a balanced binary parent makes its two values
+            # symmetric, and an even function would then be constant on them
+            values = shape(numbers)
+        else:
+            parent = robust_standardize(numbers)
+            if kind == VariableType.CONTINUOUS:
+                values = extend_beyond_zone(shape, parent)
+            else:
+                values = shape(parent)
     if np.ptp(values) == 0.0:
-        raise ValueError(
-            f"Parent '{parent_series.name}' has a constant term and cannot affect the node."
-        )
-    return compress_and_standardize(values) if compress else standardize_variance(values)
+        raise constant
+    if not compress:
+        return standardize_variance(values)
+    term = compress_and_standardize(values)
+    if kind in (VariableType.CONTINUOUS, VariableType.ORDINAL) and is_even(
+        cast(ShapeFunction, function)
+    ):
+        parent = standardize_variance(parent_series.to_numpy(dtype=np.float64))
+        term = standardize_variance(term - np.mean(term * parent) * parent)
+    return term
 
 
 # Smallest share of the explained variance that each parent carries (see mean_coefficients).
@@ -572,10 +756,11 @@ def latent_to_variable(
 ) -> pd.Series:
     """Convert a continuous latent variable into a continuous, binary or ordinal variable.
 
-    A continuous variable is the latent one scaled to a bounded range; a binary one is
-    the latent variable split in two classes, and an ordinal one is split in 3 to 5
-    ordered classes (see ``discretization``). Nominal variables are not built from a
-    latent variable (see ``generate_nominal``).
+    A continuous variable is the latent one standardized to mean 0 and unit variance, so
+    its children read it at a fixed scale (as in internally-standardized SCMs, Ormaniec
+    et al., 2025); a binary one is the latent variable split in two classes, and an
+    ordinal one is split in 3 to 5 ordered classes (see ``discretization``). Nominal
+    variables are not built from a latent variable (see ``generate_nominal``).
 
     Parameters
     ----------
@@ -611,7 +796,7 @@ def latent_to_variable(
     if target == VariableType.BINARY:
         return pd.Series(discretization(rng, 2, latent), index=index)
     if target == VariableType.CONTINUOUS:
-        return pd.Series(standardize_scale(latent), index=index)
+        return pd.Series(standardize_variance(latent), index=index)
     raise ValueError(f"Unexpected target: {target}")
 
 
@@ -831,7 +1016,7 @@ def node_generator_with_no_parents(
     """Generate a root node as pure exogenous noise, without any function of parents.
 
     A continuous root is the noise of the model (Gaussian, or Laplace in the linear
-    non-Gaussian model), scaled to a bounded range; a binary or ordinal root is that
+    non-Gaussian model), standardized to mean 0 and unit variance; a binary or ordinal root is that
     noise discretized; a nominal root has categories with random probabilities. This
     is the usual convention for the first variables of an additive-noise benchmark.
 
@@ -863,7 +1048,7 @@ def node_generator_with_no_parents(
     noise_sample = rules.noise_functions.sample(rng)(n)
 
     if target_variable == VariableType.CONTINUOUS:
-        return pd.Series(standardize_scale(noise_sample))
+        return pd.Series(standardize_variance(noise_sample))
 
     # pd.qcut is scale-invariant, so binary/ordinal discretize the raw noise directly.
     num_bins = categorical_num_terms(rng) if target_variable == VariableType.ORDINAL else 2

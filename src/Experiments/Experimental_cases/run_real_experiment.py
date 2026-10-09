@@ -141,10 +141,12 @@ def run_real_job(
     results["robustness"] = float("nan")
     results["n_failed_splits"] = 0
     if n_splits > 0:
+        # each half is post-processed again: a half can miss a rare category, which some
+        # tests reject (Mixed-CI) unless the unused categories are removed
         results["robustness"], results["n_failed_splits"] = selection_frequency(
             data,
             statements,
-            lambda frame, x, y, z: spec.test(frame, x, y, z, **spec.kwargs(0)),
+            lambda frame, x, y, z: spec.test(spec.post_process(frame), x, y, z, **spec.kwargs(0)),
             np.random.default_rng(_seed(dataset.name)),
             n_splits,
         )
@@ -221,9 +223,19 @@ def main() -> None:
     arguments = parser.parse_args()
 
     done = set()
-    if arguments.output.exists():
+    if arguments.output.exists() and arguments.output.stat().st_size > 0:
+        # a pair counts as done only with one row per statement; a cut write is run again
         previous = pd.read_csv(arguments.output, dtype={"x": str, "y": str, "z": str})
-        done = set(zip(previous["dataset"], previous["ci_test"], strict=True))
+        expected = {name: len(build_statements(load())[0]) for name, load in LOADERS.items()}
+        sizes = previous.groupby(["dataset", "ci_test"]).size().reset_index(name="rows")
+        done = {
+            (name, test)
+            for name, test, rows in sizes.itertuples(index=False)
+            if rows == expected.get(name)
+        }
+        keep = [pair in done for pair in zip(previous["dataset"], previous["ci_test"], strict=True)]
+        if not all(keep):
+            previous[keep].to_csv(arguments.output, index=False)
     jobs = [
         (name, test)
         for test in TEST_ORDER

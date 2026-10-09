@@ -402,8 +402,9 @@ def repair_results(path: Path) -> set[str]:
         if path.stat().st_size == 0:
             return set()
     data = pd.read_csv(path, dtype={"dataset_id": str})
-    counts = data["dataset_id"].value_counts()
-    complete = set(counts[counts == len(TESTS)].index)
+    per_dataset = data.groupby("dataset_id")["ci_test"].agg(["size", "nunique"])
+    whole = (per_dataset["size"] == len(TESTS)) & (per_dataset["nunique"] == len(TESTS))
+    complete = set(per_dataset.index[whole])
     if len(complete) * len(TESTS) != len(data):
         temporary = path.with_suffix(".tmp")
         data[data["dataset_id"].isin(complete)].to_csv(temporary, index=False)

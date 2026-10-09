@@ -27,11 +27,13 @@ from src.Experiments.Node_Generation.node_generator import (
     discretization,
     draw_function,
     evaluate_scale,
+    extend_beyond_zone,
     generate_node,
     generate_nominal,
     generate_root,
     get_mean_functions,
     get_scale_function,
+    grows_beyond_zone,
     latent_to_variable,
     mean_coefficients,
     node_generator,
@@ -107,7 +109,7 @@ PARENT_LAWS: dict[str, Callable[[np.random.Generator, int], np.ndarray]] = {
 
 @pytest.mark.parametrize("law", PARENT_LAWS)
 @pytest.mark.parametrize("shape", SHAPES)
-def test_at_least_a_fifth_of_the_observations_carry_the_variance_of_a_term(
+def test_the_variance_of_a_term_is_not_taken_from_a_handful_of_observations(
     shape: str, law: str
 ) -> None:
     """The variance of a standardized term is not taken from a handful of observations.
@@ -115,8 +117,8 @@ def test_at_least_a_fifth_of_the_observations_carry_the_variance_of_a_term(
     The effective number of observations is ``(sum d)^2 / sum d^2`` with ``d`` the
     squared term; it equals n when all observations weigh the same and is close to 0
     when a few dominate. The parents have the noise laws of the generator, including
-    the heavy-tailed ones, where the raw exponential, cube and square shapes have
-    less than 0.1 n.
+    the heavy-tailed ones, where the raw exponential, cube and square shapes, only
+    standardized, have between 0.002 n and 0.07 n.
     """
     n = 3000
     fractions = []
@@ -126,7 +128,7 @@ def test_at_least_a_fifth_of_the_observations_carry_the_variance_of_a_term(
         squared = standardized_term(getattr(factory, shape)(rng), parent) ** 2
         fractions.append(squared.sum() ** 2 / (squared**2).sum() / n)
 
-    assert np.median(fractions) >= 0.2
+    assert np.median(fractions) >= 0.08
 
 
 @pytest.mark.parametrize(
@@ -150,6 +152,88 @@ def test_a_standardized_term_is_detectable_whatever_its_shape(shape: str) -> Non
         rejections += KCI().test(parent_values, child).reject
 
     assert rejections / repetitions >= 0.9
+
+
+def test_chained_exponentials_do_not_concentrate_the_variance_with_depth() -> None:
+    """Along a path of exponentials the term keeps a stable effective number of observations.
+
+    Each node is 0.7 of the term of its parent plus noise and feeds the next one. Only
+    standardizing (``compress=False``) leaves under 0.01 n by the sixth node.
+    """
+    n, depth = 2000, 6
+    fractions = []
+    for seed in range(20):
+        rng = np.random.default_rng(seed)
+        node = rng.standard_normal(n)
+        for _ in range(depth):
+            term = standardized_term(lambda u: np.exp(u) - 1, pd.Series(node))
+            node = np.sqrt(0.7) * term + np.sqrt(0.3) * rng.standard_normal(n)
+        squared = term**2
+        fractions.append(squared.sum() ** 2 / (squared**2).sum() / n)
+
+    assert np.median(fractions) >= 0.05
+
+
+@pytest.mark.parametrize("shape", ["square_shape", "cosine_shape"])
+def test_an_even_function_of_a_skewed_parent_has_no_linear_part(shape: str) -> None:
+    """An even function stays invisible to a linear test even if the parent is skewed."""
+    rng = np.random.default_rng(0)
+    parent = pd.Series(np.exp(rng.standard_normal(3000)))
+
+    term = standardized_term(getattr(factory, shape)(rng), parent)
+
+    assert abs(np.corrcoef(term, parent)[0, 1]) < 1e-9
+
+
+@pytest.mark.parametrize("shape", ["square_shape", "cosine_shape"])
+def test_an_even_function_of_a_balanced_binary_parent_is_not_constant(shape: str) -> None:
+    rng = np.random.default_rng(0)
+    parent = pd.Series(np.repeat([0, 1], 500), name="b")
+
+    term = standardized_term(getattr(factory, shape)(rng), parent)
+
+    assert np.ptp(term) > 0.0
+
+
+def test_an_odd_function_keeps_its_linear_part() -> None:
+    rng = np.random.default_rng(0)
+    parent = pd.Series(rng.standard_normal(3000))
+
+    term = standardized_term(factory.cube_shape(rng), parent)
+
+    assert np.corrcoef(term, parent)[0, 1] > 0.5
+
+
+@pytest.mark.parametrize(
+    ("shape", "sides"),
+    [
+        (lambda u: u**2, (True, True)),
+        (lambda u: u**3, (True, True)),
+        (lambda u: np.exp(u), (False, True)),
+        (lambda u: np.exp(-2 * u), (True, False)),
+        (lambda u: u, (False, False)),
+        (lambda u: np.sin(0.5 * u), (False, False)),
+        (lambda u: np.cos(1.5 * u) - 1, (False, False)),
+        (lambda u: np.tanh(2 * u), (False, False)),
+    ],
+)
+def test_only_the_sides_where_a_function_grows_fast_are_extended(
+    shape: Callable[[np.ndarray], np.ndarray], sides: tuple[bool, bool]
+) -> None:
+    assert (grows_beyond_zone(shape, -1.0), grows_beyond_zone(shape, 1.0)) == sides
+
+
+def test_the_extension_is_smooth_at_the_edge_and_grows_logarithmically() -> None:
+    def shape(u: np.ndarray) -> np.ndarray:
+        return np.exp(u)
+
+    z = np.array([-50.0, 3.0 - 1e-6, 3.0 + 1e-6, 30.0, 300.0, 3000.0])
+
+    values = extend_beyond_zone(shape, z)
+
+    assert values[0] == shape(np.array([-50.0]))[0]  # the flat side is not touched
+    assert values[2] - values[1] == pytest.approx(0.0, abs=1e-3)
+    assert values[4] - values[3] == pytest.approx(values[5] - values[4])
 
 
 def test_standardized_term_rejects_a_constant_term() -> None:
@@ -566,7 +650,9 @@ def test_latent_to_variable_builds_each_target_type() -> None:
     ordinal = latent_to_variable(rng, latent, VariableType.ORDINAL, index)
 
     assert continuous.index.equals(index)
-    assert np.abs(continuous).max() == pytest.approx(5.0)
+    assert continuous.mean() == pytest.approx(0.0, abs=1e-9)
+    assert continuous.std(ddof=0) == pytest.approx(1.0)
+    assert np.array_equal(np.argsort(continuous.to_numpy()), np.argsort(latent))
     assert set(binary.unique()) == {0, 1}
     assert isinstance(ordinal.dtype, pd.CategoricalDtype)
     assert ordinal.dtype.ordered
