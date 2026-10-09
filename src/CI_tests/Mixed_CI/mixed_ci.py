@@ -61,6 +61,7 @@ class MixedCI:
                 "Series.cat.remove_unused_categories()."
             )
 
+    # TODO: Think about how to manage Binary variables.
     def _variable_type(self, series: pd.Series) -> VariableType:
         """Return the `VariableType` of a column, following the dtype rules of the class."""
         if isinstance(series.dtype, pd.CategoricalDtype):
