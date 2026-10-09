@@ -170,7 +170,7 @@ class CMIknn:
                 z, r=eps, p=np.inf, return_length=True, workers=self.workers
             )
         else:
-            k_z = np.full(size, size, dtype=np.float64)
+            k_z = np.full(size, size, dtype=np.int64)
 
         return k_xz, k_yz, k_z
 
