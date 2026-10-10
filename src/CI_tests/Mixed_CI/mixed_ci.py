@@ -21,6 +21,21 @@ from statsmodels.regression.linear_model import RegressionResultsWrapper
 from src.CI_tests.common import CIResult, ci_test
 
 
+def _fit_discrete(model: sm.Logit | sm.MNLogit) -> BinaryResultsWrapper | MultinomialResultsWrapper:
+    """Fit a logistic or multinomial model by maximum likelihood.
+
+    Under quasi-complete separation (some predictor level occurs with a single outcome
+    value) the likelihood approaches its supremum while the coefficients diverge, so the
+    Hessian at the optimum is singular and statsmodels raises when it inverts it for the
+    covariance. The tests use only the likelihood and the predictions, so in that case the
+    same Newton fit is repeated without computing the covariance.
+    """
+    try:
+        return model.fit(disp=0)
+    except np.linalg.LinAlgError:
+        return model.fit(disp=0, cov_params_func=lambda *_: None)
+
+
 class VariableType(StrEnum):
     """Type of a variable, which selects the regression model used for it."""
 
@@ -169,8 +184,8 @@ class MixedCI:
         )
         exog1 = sm.add_constant(design1, has_constant="skip")
 
-        mod0: BinaryResultsWrapper = sm.Logit(outcome, exog0).fit(disp=0)
-        mod1: BinaryResultsWrapper = sm.Logit(outcome, exog1).fit(disp=0)
+        mod0: BinaryResultsWrapper = _fit_discrete(sm.Logit(outcome, exog0))
+        mod1: BinaryResultsWrapper = _fit_discrete(sm.Logit(outcome, exog1))
 
         return self._chi2_log_pvalue(mod0, mod1)
 
@@ -211,8 +226,8 @@ class MixedCI:
         )
         exog1 = sm.add_constant(design1, has_constant="skip")
 
-        mod0: MultinomialResultsWrapper = sm.MNLogit(outcome, exog0).fit(disp=0)
-        mod1: MultinomialResultsWrapper = sm.MNLogit(outcome, exog1).fit(disp=0)
+        mod0: MultinomialResultsWrapper = _fit_discrete(sm.MNLogit(outcome, exog0))
+        mod1: MultinomialResultsWrapper = _fit_discrete(sm.MNLogit(outcome, exog1))
 
         return self._chi2_log_pvalue(mod0, mod1)
 
@@ -266,7 +281,7 @@ class MixedCI:
             cump = np.empty((n, n_thresholds))
             for j in range(1, n_thresholds + 1):
                 y_bin = (codes >= j).astype(int)
-                mod: BinaryResultsWrapper = sm.Logit(y_bin, exog).fit(disp=0)
+                mod: BinaryResultsWrapper = _fit_discrete(sm.Logit(y_bin, exog))
                 cump[:, j - 1] = 1.0 - mod.predict(exog)
 
             p = np.empty((n, k))

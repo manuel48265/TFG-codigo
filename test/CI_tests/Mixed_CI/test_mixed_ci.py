@@ -111,3 +111,17 @@ def test_unused_categories_raise_a_clear_error_and_removing_them_fixes_it(role: 
 
     cleaned = df.assign(c=df["c"].cat.remove_unused_categories())
     assert np.isfinite(mixed_ci_test(cleaned, x, y, z).p_value)
+
+
+def test_separated_binary_outcome_does_not_raise() -> None:
+    """y is a step function of x and the level "b" of z occurs only with y = 1: the Newton
+    fit separates the data and its Hessian is singular, which statsmodels cannot invert.
+    """
+    rng = np.random.default_rng(0)
+    x = rng.normal(size=100)
+    level_b = (x > 1) & (rng.random(100) < 0.5)
+    df = pd.DataFrame(
+        {"x": x, "y": (x > 0).astype(int), "z": pd.Categorical(np.where(level_b, "b", "a"))}
+    )
+
+    assert mixed_ci_test(df, "x", "y", ["z"]).reject
