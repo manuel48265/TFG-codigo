@@ -164,7 +164,7 @@ TESTS = [
 def build_cases(
     reps: int = 50,
     topologies: tuple[FundamentalCase, ...] = tuple(FundamentalCase),
-    z_sizes: tuple[int, ...] = (1, 2, 3),
+    z_sizes: tuple[int, ...] = (1, 2, 3, 4, 5),
     n_samples: tuple[int, ...] = N_SAMPLES,
     rules: tuple[str, ...] = tuple(RULES),
     type_mixes: tuple[str, ...] = TYPE_MIXES,
