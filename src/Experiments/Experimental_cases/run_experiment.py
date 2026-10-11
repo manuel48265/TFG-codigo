@@ -162,7 +162,7 @@ TESTS = [
 
 
 def build_cases(
-    reps: int = 50,
+    reps: int = 200,
     topologies: tuple[FundamentalCase, ...] = tuple(FundamentalCase),
     z_sizes: tuple[int, ...] = (1, 2, 3, 4, 5),
     n_samples: tuple[int, ...] = N_SAMPLES,
@@ -176,7 +176,7 @@ def build_cases(
 
     Parameters
     ----------
-    reps : int, optional (default: 50)
+    reps : int, optional (default: 200)
         Repetitions of every combination of the other arguments.
 
     topologies, z_sizes, n_samples, rules, type_mixes : tuples
@@ -509,7 +509,7 @@ def run_experiment(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
-    parser.add_argument("--reps", type=int, default=50)
+    parser.add_argument("--reps", type=int, default=200)
     parser.add_argument("--workers", type=int, default=os.cpu_count() or 1)
     parser.add_argument("--limit", type=int, default=None)
     arguments = parser.parse_args()
