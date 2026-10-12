@@ -127,7 +127,7 @@ class PCTrialResult:
 
 
 def build_cases(
-    reps: int = 20,
+    reps: int = 50,
     topologies: tuple[str, ...] = TOPOLOGIES,
     scenarios: tuple[str, ...] = tuple(SCENARIOS),
     n_samples: tuple[int, ...] = N_SAMPLES,
@@ -136,7 +136,7 @@ def build_cases(
 
     Parameters
     ----------
-    reps : int, optional (default: 20)
+    reps : int, optional (default: 50)
         Repetitions of every combination of the other arguments.
 
     topologies, scenarios, n_samples : tuples
@@ -298,7 +298,7 @@ def run_pc_dataset(case: PCCase, code_version: str = "") -> list[PCTrialResult]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
-    parser.add_argument("--reps", type=int, default=20)
+    parser.add_argument("--reps", type=int, default=50)
     parser.add_argument("--workers", type=int, default=os.cpu_count() or 1)
     parser.add_argument("--limit", type=int, default=None)
     arguments = parser.parse_args()
